@@ -17,7 +17,7 @@ import { generateId } from "../shared.js";
 export interface ToolsConfig {
   workspaceId: string;
   retention: { retentionDays: number; summaryRetentionDays: number; conclusionRetentionDays: number };
-  dream: { enabled: boolean };
+  dream: { enabled: boolean; intervalMs: number; batchSize: number; minMessagesSinceLastDream: number };
 }
 
 // Tool definitions - single source of truth
@@ -147,6 +147,11 @@ export const TOOLS = {
   learn_list_tags: {
     label: "List All Tags",
     description: "List all unique tags across sessions with their counts.",
+    params: Type.Object({}),
+  },
+  learn_get_dream_status: {
+    label: "Get Dream Status",
+    description: "Get information about the dreaming system - when it last ran, next scheduled dream, and statistics.",
     params: Type.Object({}),
   },
   learn_export: { label: "Export Memory", description: "Export all memory data as JSON for backup.", params: Type.Object({}) },
@@ -552,6 +557,66 @@ export function createToolExecutors(deps: {
         const tags = store.getAllTags(config.workspaceId);
         if (!tags.length) return { content: [{ type: "text" as const, text: "No tags found" }], details: { count: 0, tags: [] } };
         return { content: [{ type: "text" as const, text: tags.map((t, i) => `${i + 1}. ${t.tag} (${t.count})`).join("\n") }], details: { count: tags.length, tags } };
+      }) as ToolExecute<any>,
+    },
+    learn_get_dream_status: {
+      execute: (async (
+        _: string,
+        __: Static<typeof TOOLS.learn_get_dream_status.params>,
+        _signal: AbortSignal | undefined,
+        _onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+        _ctx: ExtensionContext
+      ): Promise<AgentToolResult<unknown>> => {
+        const dreamMeta = store.getDreamMetadata(config.workspaceId);
+        const messages = store.getRecentMessages(config.workspaceId, "user", 1000);
+        const messagesSinceLastDream = messages.filter((m: any) => m.created_at > dreamMeta.lastDreamedAt).length;
+        
+        // Calculate next dream time
+        const nextDreamMs = dreamMeta.lastDreamedAt > 0 
+          ? Math.max(0, (dreamMeta.lastDreamedAt + config.dream.intervalMs) - Date.now())
+          : 0;
+        const nextDreamMinutes = Math.ceil(nextDreamMs / 60000);
+        
+        // Format last dream time
+        const lastDreamFormatted = dreamMeta.lastDreamedAt > 0
+          ? new Date(dreamMeta.lastDreamedAt).toLocaleString()
+          : "Never";
+        
+        const lines = [
+          "## Dream Status",
+          "",
+          `**Enabled**: ${config.dream.enabled ? "Yes" : "No"}`,
+          `**Last Dream**: ${lastDreamFormatted}`,
+          `**Total Dreams**: ${dreamMeta.dreamCount}`,
+          `**Messages Since Last Dream**: ${messagesSinceLastDream}`,
+          "",
+          "### Configuration",
+          `**Interval**: ${(config.dream.intervalMs / 60000).toFixed(0)} minutes`,
+          `**Batch Size**: ${config.dream.batchSize} messages`,
+          `**Min Messages**: ${config.dream.minMessagesSinceLastDream}`,
+          "",
+          "### Last Dream Results",
+          `**Messages Processed**: ${dreamMeta.lastDreamMessages}`,
+          `**Conclusions Generated**: ${dreamMeta.lastDreamConclusions}`,
+          "",
+          nextDreamMs > 0 
+            ? `**Next Dream In**: ~${nextDreamMinutes} minutes`
+            : `**Next Dream**: Ready now (${messagesSinceLastDream} messages pending)`,
+        ];
+        
+        return { 
+          content: [{ type: "text" as const, text: lines.join("\n") }], 
+          details: { 
+            enabled: config.dream.enabled,
+            lastDreamedAt: dreamMeta.lastDreamedAt,
+            dreamCount: dreamMeta.dreamCount,
+            messagesSinceLastDream,
+            nextDreamMs,
+            intervalMs: config.dream.intervalMs,
+            lastDreamMessages: dreamMeta.lastDreamMessages,
+            lastDreamConclusions: dreamMeta.lastDreamConclusions,
+          } 
+        };
       }) as ToolExecute<any>,
     },
     learn_export: {

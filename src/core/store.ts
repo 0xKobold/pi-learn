@@ -220,6 +220,15 @@ export class SQLiteStore {
         FOREIGN KEY (session_id, workspace_id) REFERENCES sessions(id, workspace_id)
       );
 
+      CREATE TABLE IF NOT EXISTS dream_metadata (
+        workspace_id TEXT PRIMARY KEY,
+        last_dreamed_at INTEGER NOT NULL DEFAULT 0,
+        dream_count INTEGER NOT NULL DEFAULT 0,
+        last_dream_messages INTEGER NOT NULL DEFAULT 0,
+        last_dream_conclusions INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+      );
+
       CREATE INDEX IF NOT EXISTS idx_conclusions_peer ON conclusions(peer_id, workspace_id);
       CREATE INDEX IF NOT EXISTS idx_conclusions_created ON conclusions(created_at);
       CREATE INDEX IF NOT EXISTS idx_summaries_peer ON summaries(peer_id, workspace_id);
@@ -700,6 +709,33 @@ export class SQLiteStore {
     data.conclusions?.forEach((c) => this.saveConclusion(workspaceId, c));
     data.summaries?.forEach((s) => this.saveSummary(workspaceId, s));
     data.observations?.forEach((o) => this.saveObservation(o));
+  }
+
+  // Dream metadata
+  getDreamMetadata(workspaceId: string): { lastDreamedAt: number; dreamCount: number; lastDreamMessages: number; lastDreamConclusions: number } {
+    const row = this.getOne("SELECT * FROM dream_metadata WHERE workspace_id = ?", [workspaceId]);
+    if (!row) {
+      return { lastDreamedAt: 0, dreamCount: 0, lastDreamMessages: 0, lastDreamConclusions: 0 };
+    }
+    return {
+      lastDreamedAt: row.last_dreamed_at as number,
+      dreamCount: row.dream_count as number,
+      lastDreamMessages: row.last_dream_messages as number,
+      lastDreamConclusions: row.last_dream_conclusions as number,
+    };
+  }
+
+  updateDreamMetadata(workspaceId: string, messageCount: number, conclusionCount: number): void {
+    this.run(
+      `INSERT INTO dream_metadata (workspace_id, last_dreamed_at, dream_count, last_dream_messages, last_dream_conclusions) 
+       VALUES (?, ?, 1, ?, ?)
+       ON CONFLICT(workspace_id) DO UPDATE SET 
+         last_dreamed_at = excluded.last_dreamed_at,
+         dream_count = dream_count + 1,
+         last_dream_messages = excluded.last_dream_messages,
+         last_dream_conclusions = excluded.last_dream_conclusions`,
+      [workspaceId, Date.now(), messageCount, conclusionCount]
+    );
   }
 
   // Helpers

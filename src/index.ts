@@ -87,6 +87,8 @@ export default async (pi: ExtensionAPI): Promise<void> => {
         sourceSessionId: messages[0]?.session_id || "dream",
       });
     }
+    // Track dream metadata
+    store.updateDreamMetadata(config.workspaceId, messages.length, result.newConclusions.length);
   };
 
   // UI notification helper - captures ctx.ui when available
@@ -155,6 +157,22 @@ export default async (pi: ExtensionAPI): Promise<void> => {
           await runDream();
           ctx.ui.notify("Dream cycle complete", "info");
           return;
+        case "dream-status": {
+          const dreamMeta = store.getDreamMetadata(config.workspaceId);
+          const messages = store.getRecentMessages(config.workspaceId, "user", 1000);
+          const messagesSinceLastDream = messages.filter((m: any) => m.created_at > dreamMeta.lastDreamedAt).length;
+          const lastDreamFormatted = dreamMeta.lastDreamedAt > 0
+            ? new Date(dreamMeta.lastDreamedAt).toLocaleString()
+            : "Never";
+          const nextDreamMs = dreamMeta.lastDreamedAt > 0
+            ? Math.max(0, (dreamMeta.lastDreamedAt + config.dream.intervalMs) - Date.now())
+            : 0;
+          ctx.ui.notify(
+            `Dream Status\nEnabled: ${config.dream.enabled}\nLast Dream: ${lastDreamFormatted}\nTotal Dreams: ${dreamMeta.dreamCount}\nMessages Since: ${messagesSinceLastDream}\nNext In: ${nextDreamMs > 0 ? Math.ceil(nextDreamMs / 60000) + " min" : "Ready now"}`,
+            "info"
+          );
+          return;
+        }
         case "prune": {
           const result = store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
           ctx.ui.notify(`Pruned ${result.deleted} records`, "info");
@@ -174,7 +192,7 @@ export default async (pi: ExtensionAPI): Promise<void> => {
           return;
         }
         default:
-          ctx.ui.notify("Commands: status, context, dream, prune, search <query>, sessions", "info");
+          ctx.ui.notify("Commands: status, context, dream, dream-status, prune, search <query>, sessions", "info");
           return;
       }
     },

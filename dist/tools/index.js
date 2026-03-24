@@ -133,6 +133,11 @@ export const TOOLS = {
         description: "List all unique tags across sessions with their counts.",
         params: Type.Object({}),
     },
+    learn_get_dream_status: {
+        label: "Get Dream Status",
+        description: "Get information about the dreaming system - when it last ran, next scheduled dream, and statistics.",
+        params: Type.Object({}),
+    },
     learn_export: { label: "Export Memory", description: "Export all memory data as JSON for backup.", params: Type.Object({}) },
     learn_import: {
         label: "Import Memory",
@@ -404,6 +409,56 @@ export function createToolExecutors(deps) {
                 if (!tags.length)
                     return { content: [{ type: "text", text: "No tags found" }], details: { count: 0, tags: [] } };
                 return { content: [{ type: "text", text: tags.map((t, i) => `${i + 1}. ${t.tag} (${t.count})`).join("\n") }], details: { count: tags.length, tags } };
+            }),
+        },
+        learn_get_dream_status: {
+            execute: (async (_, __, _signal, _onUpdate, _ctx) => {
+                const dreamMeta = store.getDreamMetadata(config.workspaceId);
+                const messages = store.getRecentMessages(config.workspaceId, "user", 1000);
+                const messagesSinceLastDream = messages.filter((m) => m.created_at > dreamMeta.lastDreamedAt).length;
+                // Calculate next dream time
+                const nextDreamMs = dreamMeta.lastDreamedAt > 0
+                    ? Math.max(0, (dreamMeta.lastDreamedAt + config.dream.intervalMs) - Date.now())
+                    : 0;
+                const nextDreamMinutes = Math.ceil(nextDreamMs / 60000);
+                // Format last dream time
+                const lastDreamFormatted = dreamMeta.lastDreamedAt > 0
+                    ? new Date(dreamMeta.lastDreamedAt).toLocaleString()
+                    : "Never";
+                const lines = [
+                    "## Dream Status",
+                    "",
+                    `**Enabled**: ${config.dream.enabled ? "Yes" : "No"}`,
+                    `**Last Dream**: ${lastDreamFormatted}`,
+                    `**Total Dreams**: ${dreamMeta.dreamCount}`,
+                    `**Messages Since Last Dream**: ${messagesSinceLastDream}`,
+                    "",
+                    "### Configuration",
+                    `**Interval**: ${(config.dream.intervalMs / 60000).toFixed(0)} minutes`,
+                    `**Batch Size**: ${config.dream.batchSize} messages`,
+                    `**Min Messages**: ${config.dream.minMessagesSinceLastDream}`,
+                    "",
+                    "### Last Dream Results",
+                    `**Messages Processed**: ${dreamMeta.lastDreamMessages}`,
+                    `**Conclusions Generated**: ${dreamMeta.lastDreamConclusions}`,
+                    "",
+                    nextDreamMs > 0
+                        ? `**Next Dream In**: ~${nextDreamMinutes} minutes`
+                        : `**Next Dream**: Ready now (${messagesSinceLastDream} messages pending)`,
+                ];
+                return {
+                    content: [{ type: "text", text: lines.join("\n") }],
+                    details: {
+                        enabled: config.dream.enabled,
+                        lastDreamedAt: dreamMeta.lastDreamedAt,
+                        dreamCount: dreamMeta.dreamCount,
+                        messagesSinceLastDream,
+                        nextDreamMs,
+                        intervalMs: config.dream.intervalMs,
+                        lastDreamMessages: dreamMeta.lastDreamMessages,
+                        lastDreamConclusions: dreamMeta.lastDreamConclusions,
+                    }
+                };
             }),
         },
         learn_export: {

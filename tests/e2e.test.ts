@@ -336,7 +336,7 @@ describe("E2E: Tool Execution Flow", () => {
     const config: ToolsConfig = {
       workspaceId: "test-ws",
       retention: { retentionDays: 30, summaryRetentionDays: 30, conclusionRetentionDays: 90 },
-      dream: { enabled: true },
+      dream: { enabled: true, intervalMs: 60000, batchSize: 50, minMessagesSinceLastDream: 5 },
     };
 
     const runDream = async () => {
@@ -364,6 +364,35 @@ describe("E2E: Tool Execution Flow", () => {
 
     expect(result.details.success).toBe(true);
     expect(result.content[0].text).toContain("Dream cycle complete");
+  });
+
+  it("learn_get_dream_status returns dream metadata", async () => {
+    const config: ToolsConfig = {
+      workspaceId: "test-ws",
+      retention: { retentionDays: 30, summaryRetentionDays: 30, conclusionRetentionDays: 90 },
+      dream: { enabled: true, intervalMs: 60000, batchSize: 50, minMessagesSinceLastDream: 5 },
+    };
+
+    // Seed some dream metadata
+    store.updateDreamMetadata("test-ws", 45, 3);
+
+    const dreamExecutors = createToolExecutors({
+      store,
+      contextAssembler,
+      reasoningEngine,
+      config,
+      runDream: async () => {},
+    });
+
+    const executor = dreamExecutors.learn_get_dream_status;
+    const result = await executor.execute("tool", {}, undefined, undefined, mockCtx);
+
+    expect(result.details.enabled).toBe(true);
+    expect(result.details.dreamCount).toBe(1);
+    expect(result.details.lastDreamMessages).toBe(45);
+    expect(result.details.lastDreamConclusions).toBe(3);
+    expect(result.details.lastDreamedAt).toBeGreaterThan(0);
+    expect(result.content[0].text).toContain("Dream Status");
   });
 
   it("learn_prune removes old records", async () => {
@@ -648,6 +677,19 @@ describe("E2E: Command Handlers", () => {
         await reasoningEngine.dream(messages.map((m: any) => ({ role: m.role, content: m.content })), []);
         return "Dream cycle complete";
       }
+      case "dream-status": {
+        const dreamMeta = store.getDreamMetadata(workspaceId);
+        const messages = store.getRecentMessages(workspaceId, "user", 1000);
+        const messagesSinceLastDream = messages.filter((m: any) => m.created_at > dreamMeta.lastDreamedAt).length;
+        const lastDreamFormatted = dreamMeta.lastDreamedAt > 0
+          ? new Date(dreamMeta.lastDreamedAt).toLocaleString()
+          : "Never";
+        const intervalMs = 3600000; // Default 1 hour
+        const nextDreamMs = dreamMeta.lastDreamedAt > 0
+          ? Math.max(0, (dreamMeta.lastDreamedAt + intervalMs) - Date.now())
+          : 0;
+        return `Dream Status\nEnabled: true\nLast Dream: ${lastDreamFormatted}\nTotal Dreams: ${dreamMeta.dreamCount}\nMessages Since: ${messagesSinceLastDream}\nNext In: ${nextDreamMs > 0 ? Math.ceil(nextDreamMs / 60000) + " min" : "Ready now"}`;
+      }
       case "prune": {
         const result = store.prune(30, 30, 90);
         return `Pruned ${result.deleted} records`;
@@ -710,6 +752,26 @@ describe("E2E: Command Handlers", () => {
 
     const response = await executeLearnCommand("dream");
     expect(response).toBe("Dream cycle complete");
+  });
+
+  it("handles /learn dream-status command", async () => {
+    // Seed dream metadata
+    store.updateDreamMetadata("test-ws", 30, 2);
+
+    const response = await executeLearnCommand("dream-status");
+    expect(response).toContain("Last Dream:");
+    expect(response).toContain("Total Dreams: 1");
+    expect(response).toContain("Messages Since:");
+    expect(response).toContain("Enabled: true");
+  });
+
+  it("handles /learn dream-status when never dreamed", async () => {
+    // No dream metadata - never dreamed before
+    const meta = store.getDreamMetadata("test-ws");
+    expect(meta.lastDreamedAt).toBe(0);
+
+    const response = await executeLearnCommand("dream-status");
+    expect(response).toContain("Last Dream: Never");
   });
 
   it("handles /learn prune command", async () => {

@@ -92,6 +92,13 @@ export declare class SQLiteStore {
     };
     exportAll(workspaceId: string): ExportData;
     importAll(workspaceId: string, data: ExportData, merge?: boolean): void;
+    getDreamMetadata(workspaceId: string): {
+        lastDreamedAt: number;
+        dreamCount: number;
+        lastDreamMessages: number;
+        lastDreamConclusions: number;
+    };
+    updateDreamMetadata(workspaceId: string, messageCount: number, conclusionCount: number): void;
     getOrCreateWorkspace(id: string, name?: string): Workspace;
     getOrCreatePeer(workspaceId: string, id: string, name: string, type?: Peer["type"]): Peer;
     getOrCreateSession(workspaceId: string, id: string, peerIds?: string[]): Session;

@@ -163,4 +163,69 @@ describe("SQLiteStore Unit Tests", () => {
       store.close();
     });
   });
+
+  describe("Dream Metadata", () => {
+    it("returns empty metadata for new workspace", async () => {
+      const store = await createStore(path.join(testDir, "dream1.db"));
+      await store.init();
+      store.getOrCreateWorkspace("ws");
+      const meta = store.getDreamMetadata("ws");
+      expect(meta.lastDreamedAt).toBe(0);
+      expect(meta.dreamCount).toBe(0);
+      expect(meta.lastDreamMessages).toBe(0);
+      expect(meta.lastDreamConclusions).toBe(0);
+      store.close();
+    });
+
+    it("updates dream metadata after dreaming", async () => {
+      const store = await createStore(path.join(testDir, "dream2.db"));
+      await store.init();
+      store.getOrCreateWorkspace("ws");
+      store.getOrCreatePeer("ws", "user", "User", "user");
+      
+      // Simulate first dream
+      store.updateDreamMetadata("ws", 50, 3);
+      
+      const meta = store.getDreamMetadata("ws");
+      expect(meta.dreamCount).toBe(1);
+      expect(meta.lastDreamMessages).toBe(50);
+      expect(meta.lastDreamConclusions).toBe(3);
+      expect(meta.lastDreamedAt).toBeGreaterThan(0);
+      store.close();
+    });
+
+    it("increments dream count on subsequent dreams", async () => {
+      const store = await createStore(path.join(testDir, "dream3.db"));
+      await store.init();
+      store.getOrCreateWorkspace("ws");
+      
+      store.updateDreamMetadata("ws", 30, 2);
+      store.updateDreamMetadata("ws", 45, 4);
+      
+      const meta = store.getDreamMetadata("ws");
+      expect(meta.dreamCount).toBe(2);
+      expect(meta.lastDreamMessages).toBe(45);
+      expect(meta.lastDreamConclusions).toBe(4);
+      store.close();
+    });
+
+    it("preserves previous dream data on update", async () => {
+      const store = await createStore(path.join(testDir, "dream4.db"));
+      await store.init();
+      store.getOrCreateWorkspace("ws");
+      
+      const before = Date.now();
+      store.updateDreamMetadata("ws", 20, 1);
+      
+      // Wait a bit to ensure timestamp difference
+      await new Promise(r => setTimeout(r, 10));
+      
+      store.updateDreamMetadata("ws", 40, 5);
+      
+      const meta = store.getDreamMetadata("ws");
+      expect(meta.dreamCount).toBe(2);
+      expect(meta.lastDreamedAt).toBeGreaterThanOrEqual(before);
+      store.close();
+    });
+  });
 });

@@ -16,6 +16,9 @@ export interface ToolsConfig {
     };
     dream: {
         enabled: boolean;
+        intervalMs: number;
+        batchSize: number;
+        minMessagesSinceLastDream: number;
     };
 }
 export declare const TOOLS: {
@@ -172,6 +175,11 @@ export declare const TOOLS: {
         readonly description: "List all unique tags across sessions with their counts.";
         readonly params: import("@sinclair/typebox").TObject<{}>;
     };
+    readonly learn_get_dream_status: {
+        readonly label: "Get Dream Status";
+        readonly description: "Get information about the dreaming system - when it last ran, next scheduled dream, and statistics.";
+        readonly params: import("@sinclair/typebox").TObject<{}>;
+    };
     readonly learn_export: {
         readonly label: "Export Memory";
         readonly description: "Export all memory data as JSON for backup.";
@@ -272,6 +280,9 @@ export declare function createToolExecutors(deps: {
         execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
     };
     learn_list_tags: {
+        execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
+    };
+    learn_get_dream_status: {
         execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
     };
     learn_export: {
