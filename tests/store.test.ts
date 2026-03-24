@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Database } from "bun:sqlite";
+import initSqlJs, { Database as SqlJsDatabase } from "sql.js";
 import path from "path";
 import os from "os";
+import fs from "fs";
 
 // Import store class - we'll test it directly
 import {
@@ -17,15 +18,28 @@ import {
 
 // Simple in-memory store for testing without the full extension
 class TestStore {
-  private db: Database.Database;
+  private db: SqlJsDatabase | null = null;
+  private dbPath: string;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.exec("PRAGMA journal_mode = MEMORY");
+    this.dbPath = dbPath;
+  }
+
+  async init(): Promise<void> {
+    const SQL = await initSqlJs();
+    
+    // Load existing database or create new one
+    if (fs.existsSync(this.dbPath)) {
+      const buffer = fs.readFileSync(this.dbPath);
+      this.db = new SQL.Database(buffer);
+    } else {
+      this.db = new SQL.Database();
+    }
     this.initTables();
   }
 
   private initTables(): void {
+    if (!this.db) return;
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workspaces (
         id TEXT PRIMARY KEY,
@@ -104,16 +118,46 @@ class TestStore {
     `);
   }
 
+  private run(sql: string, params: any[] = []): void {
+    if (!this.db) return;
+    this.db.run(sql, params);
+  }
+
+  private getOne(sql: string, params: any[] = []): any {
+    if (!this.db) return null;
+    const stmt = this.db.prepare(sql);
+    stmt.bind(params);
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      stmt.free();
+      return row;
+    }
+    stmt.free();
+    return null;
+  }
+
+  private getAll(sql: string, params: any[] = []): any[] {
+    if (!this.db) return [];
+    const results: any[] = [];
+    const stmt = this.db.prepare(sql);
+    stmt.bind(params);
+    while (stmt.step()) {
+      results.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return results;
+  }
+
   // Workspace operations
   saveWorkspace(workspace: Workspace): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO workspaces (id, name, created_at, config)
-      VALUES (?, ?, ?, ?)
-    `).run(workspace.id, workspace.name, workspace.createdAt, JSON.stringify(workspace.config));
+    this.run(
+      `INSERT OR REPLACE INTO workspaces (id, name, created_at, config) VALUES (?, ?, ?, ?)`,
+      [workspace.id, workspace.name, workspace.createdAt, JSON.stringify(workspace.config)]
+    );
   }
 
   getWorkspace(id: string): Workspace | null {
-    const row = this.db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as any;
+    const row = this.getOne("SELECT * FROM workspaces WHERE id = ?", [id]);
     if (!row) return null;
     return {
       id: row.id,
@@ -125,16 +169,17 @@ class TestStore {
 
   // Peer operations
   savePeer(workspaceId: string, peer: Peer): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO peers (id, workspace_id, name, type, created_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(peer.id, workspaceId, peer.name, peer.type, peer.createdAt, JSON.stringify(peer.metadata));
+    this.run(
+      `INSERT OR REPLACE INTO peers (id, workspace_id, name, type, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?)`,
+      [peer.id, workspaceId, peer.name, peer.type, peer.createdAt, JSON.stringify(peer.metadata)]
+    );
   }
 
   getPeer(workspaceId: string, peerId: string): Peer | null {
-    const row = this.db.prepare(
-      "SELECT * FROM peers WHERE id = ? AND workspace_id = ?"
-    ).get(peerId, workspaceId) as any;
+    const row = this.getOne(
+      "SELECT * FROM peers WHERE id = ? AND workspace_id = ?",
+      [peerId, workspaceId]
+    );
     if (!row) return null;
     return {
       id: row.id,
@@ -146,9 +191,10 @@ class TestStore {
   }
 
   getAllPeers(workspaceId: string): Peer[] {
-    const rows = this.db.prepare(
-      "SELECT * FROM peers WHERE workspace_id = ?"
-    ).all(workspaceId) as any[];
+    const rows = this.getAll(
+      "SELECT * FROM peers WHERE workspace_id = ?",
+      [workspaceId]
+    );
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -160,24 +206,25 @@ class TestStore {
 
   // Session operations
   saveSession(workspaceId: string, session: Session): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO sessions (id, workspace_id, peer_ids, message_count, created_at, updated_at, config)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      session.id,
-      workspaceId,
-      JSON.stringify(session.peerIds),
-      session.messageCount,
-      session.createdAt,
-      session.updatedAt,
-      JSON.stringify(session.config)
+    this.run(
+      `INSERT OR REPLACE INTO sessions (id, workspace_id, peer_ids, message_count, created_at, updated_at, config) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        session.id,
+        workspaceId,
+        JSON.stringify(session.peerIds),
+        session.messageCount,
+        session.createdAt,
+        session.updatedAt,
+        JSON.stringify(session.config)
+      ]
     );
   }
 
   getSession(workspaceId: string, sessionId: string): Session | null {
-    const row = this.db.prepare(
-      "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?"
-    ).get(sessionId, workspaceId) as any;
+    const row = this.getOne(
+      "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?",
+      [sessionId, workspaceId]
+    );
     if (!row) return null;
     return {
       id: row.id,
@@ -192,27 +239,28 @@ class TestStore {
 
   // Conclusion operations
   saveConclusion(workspaceId: string, conclusion: Conclusion): void {
-    this.db.prepare(`
-      INSERT INTO conclusions (id, peer_id, workspace_id, type, content, premises, confidence, created_at, source_session_id, embedding)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      conclusion.id,
-      conclusion.peerId,
-      workspaceId,
-      conclusion.type,
-      conclusion.content,
-      JSON.stringify(conclusion.premises),
-      conclusion.confidence,
-      conclusion.createdAt,
-      conclusion.sourceSessionId,
-      conclusion.embedding ? JSON.stringify(conclusion.embedding) : null
+    this.run(
+      `INSERT INTO conclusions (id, peer_id, workspace_id, type, content, premises, confidence, created_at, source_session_id, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        conclusion.id,
+        conclusion.peerId,
+        workspaceId,
+        conclusion.type,
+        conclusion.content,
+        JSON.stringify(conclusion.premises),
+        conclusion.confidence,
+        conclusion.createdAt,
+        conclusion.sourceSessionId,
+        conclusion.embedding ? JSON.stringify(conclusion.embedding) : null
+      ]
     );
   }
 
   getConclusions(workspaceId: string, peerId: string): Conclusion[] {
-    const rows = this.db.prepare(`
-      SELECT * FROM conclusions WHERE peer_id = ? AND workspace_id = ? ORDER BY created_at DESC
-    `).all(peerId, workspaceId) as any[];
+    const rows = this.getAll(
+      `SELECT * FROM conclusions WHERE peer_id = ? AND workspace_id = ? ORDER BY created_at DESC`,
+      [peerId, workspaceId]
+    );
     return rows.map((row) => ({
       id: row.id,
       peerId: row.peer_id,
@@ -228,26 +276,27 @@ class TestStore {
 
   // Summary operations
   saveSummary(workspaceId: string, summary: Summary): void {
-    this.db.prepare(`
-      INSERT INTO summaries (id, session_id, peer_id, workspace_id, type, content, message_count, created_at, embedding)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      summary.id,
-      summary.sessionId,
-      summary.peerId,
-      workspaceId,
-      summary.type,
-      summary.content,
-      summary.messageCount,
-      summary.createdAt,
-      summary.embedding ? JSON.stringify(summary.embedding) : null
+    this.run(
+      `INSERT INTO summaries (id, session_id, peer_id, workspace_id, type, content, message_count, created_at, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        summary.id,
+        summary.sessionId,
+        summary.peerId,
+        workspaceId,
+        summary.type,
+        summary.content,
+        summary.messageCount,
+        summary.createdAt,
+        summary.embedding ? JSON.stringify(summary.embedding) : null
+      ]
     );
   }
 
   getSummaries(workspaceId: string, peerId: string): Summary[] {
-    const rows = this.db.prepare(`
-      SELECT * FROM summaries WHERE peer_id = ? AND workspace_id = ? ORDER BY created_at DESC
-    `).all(peerId, workspaceId) as any[];
+    const rows = this.getAll(
+      `SELECT * FROM summaries WHERE peer_id = ? AND workspace_id = ? ORDER BY created_at DESC`,
+      [peerId, workspaceId]
+    );
     return rows.map((row) => ({
       id: row.id,
       sessionId: row.session_id,
@@ -262,25 +311,26 @@ class TestStore {
 
   // Peer card operations
   savePeerCard(workspaceId: string, card: PeerCard): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO peer_cards (peer_id, workspace_id, name, occupation, interests, traits, goals, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      card.peerId,
-      workspaceId,
-      card.name || null,
-      card.occupation || null,
-      JSON.stringify(card.interests),
-      JSON.stringify(card.traits),
-      JSON.stringify(card.goals),
-      card.updatedAt
+    this.run(
+      `INSERT OR REPLACE INTO peer_cards (peer_id, workspace_id, name, occupation, interests, traits, goals, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        card.peerId,
+        workspaceId,
+        card.name || null,
+        card.occupation || null,
+        JSON.stringify(card.interests),
+        JSON.stringify(card.traits),
+        JSON.stringify(card.goals),
+        card.updatedAt
+      ]
     );
   }
 
   getPeerCard(workspaceId: string, peerId: string): PeerCard | null {
-    const row = this.db.prepare(
-      "SELECT * FROM peer_cards WHERE peer_id = ? AND workspace_id = ?"
-    ).get(peerId, workspaceId) as any;
+    const row = this.getOne(
+      "SELECT * FROM peer_cards WHERE peer_id = ? AND workspace_id = ?",
+      [peerId, workspaceId]
+    );
     if (!row) return null;
     return {
       peerId: row.peer_id,
@@ -309,7 +359,10 @@ class TestStore {
   }
 
   close(): void {
-    
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
   }
 }
 
@@ -320,13 +373,17 @@ describe("TestStore", () => {
   const peerId = "test-peer";
   const sessionId = "test-session";
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dbPath = path.join(os.tmpdir(), `pi-learn-test-${Date.now()}.db`);
     store = new TestStore(dbPath);
+    await store.init();
   });
 
   afterEach(() => {
-    
+    store.close();
+    try {
+      fs.unlinkSync(dbPath);
+    } catch {}
   });
 
   describe("Workspace operations", () => {

@@ -9,6 +9,6 @@
  * - renderers.ts: TUI components
  */
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-declare const _default: (pi: ExtensionAPI) => void;
+declare const _default: (pi: ExtensionAPI) => Promise<void>;
 export default _default;
 //# sourceMappingURL=index.d.ts.map

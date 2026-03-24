@@ -19,16 +19,16 @@ import { createContextAssembler } from "./core/context.js";
 import { TOOLS, createToolExecutors } from "./tools/index.js";
 // Shared
 import { DEFAULT_RETENTION, DEFAULT_DREAM, DEFAULT_TOKEN_BATCH_SIZE, DEFAULT_EMBEDDING_MODEL, DEFAULT_REASONING_MODEL, } from "./shared.js";
-// ============================================================================
-// MAIN EXTENSION
-// ============================================================================
-export default (pi) => {
+// UI notification callback - captured when commands are first executed
+let notifyCallback = null;
+export default async (pi) => {
     // Load configuration
     const config = loadConfig();
-    // Initialize database
+    // Initialize database (async for sql.js)
     const dbPath = path.join(os.homedir(), ".pi", "memory", "pi-learn.db");
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    const store = createStore(dbPath);
+    const store = await createStore(dbPath);
+    await store.init();
     // Initialize core components
     const reasoningEngine = createReasoningEngine({
         ollamaBaseUrl: config.ollamaBaseUrl,
@@ -65,6 +65,12 @@ export default (pi) => {
             });
         }
     };
+    // UI notification helper - captures ctx.ui when available
+    const notify = (message, type = "info") => {
+        if (notifyCallback) {
+            notifyCallback(message, type);
+        }
+    };
     // Tools config
     const toolsConfig = {
         workspaceId: config.workspaceId,
@@ -96,6 +102,8 @@ export default (pi) => {
     pi.registerCommand("learn", {
         description: "Pi-learn memory management",
         handler: async (args, ctx) => {
+            // Capture UI notify callback for background tasks
+            notifyCallback = ctx.ui.notify.bind(ctx.ui);
             const [sub, ...rest] = args.trim().split(/\s+/);
             const subArgs = rest.join(" ");
             switch (sub) {
@@ -165,16 +173,20 @@ export default (pi) => {
         setTimeout(() => runDream().catch(console.error), 30000);
         setInterval(() => runDream().catch(console.error), config.dream.intervalMs);
     }
-    // Retention
+    // Retention (runs silently in background - use /learn prune command to see results)
     if (config.retention.pruneOnStartup) {
         setTimeout(() => {
             const result = store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
-            if (result.deleted > 0)
-                console.log(`[pi-learn] Pruned ${result.deleted} old records`);
+            if (result.deleted > 0) {
+                notify(`Pruned ${result.deleted} old records`, "info");
+            }
         }, 5000);
     }
     setInterval(() => {
-        store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
+        const result = store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
+        if (result.deleted > 0) {
+            notify(`Pruned ${result.deleted} old records`, "info");
+        }
     }, config.retention.pruneIntervalHours * 60 * 60 * 1000);
 };
 function loadConfig() {

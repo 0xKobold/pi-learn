@@ -17,7 +17,7 @@ import * as fs from "fs";
 import * as os from "os";
 
 // Core modules
-import { createStore } from "./core/store.js";
+import { createStore, SQLiteStore } from "./core/store.js";
 import { createReasoningEngine, DEFAULT_RETRY_CONFIG } from "./core/reasoning.js";
 import { createContextAssembler } from "./core/context.js";
 
@@ -37,14 +37,21 @@ import {
 // MAIN EXTENSION
 // ============================================================================
 
-export default (pi: ExtensionAPI): void => {
+// UI notification callback type
+type NotifyCallback = (message: string, type?: "info" | "warning" | "error") => void;
+
+// UI notification callback - captured when commands are first executed
+let notifyCallback: NotifyCallback | null = null;
+
+export default async (pi: ExtensionAPI): Promise<void> => {
   // Load configuration
   const config = loadConfig();
 
-  // Initialize database
+  // Initialize database (async for sql.js)
   const dbPath = path.join(os.homedir(), ".pi", "memory", "pi-learn.db");
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const store = createStore(dbPath);
+  const store = await createStore(dbPath);
+  await store.init();
 
   // Initialize core components
   const reasoningEngine = createReasoningEngine({
@@ -81,6 +88,13 @@ export default (pi: ExtensionAPI): void => {
         createdAt: Date.now(),
         sourceSessionId: messages[0]?.session_id || "dream",
       });
+    }
+  };
+
+  // UI notification helper - captures ctx.ui when available
+  const notify = (message: string, type: "info" | "warning" | "error" = "info") => {
+    if (notifyCallback) {
+      notifyCallback(message, type);
     }
   };
 
@@ -121,6 +135,9 @@ export default (pi: ExtensionAPI): void => {
   pi.registerCommand("learn", {
     description: "Pi-learn memory management",
     handler: async (args: string, ctx: ExtensionContext) => {
+      // Capture UI notify callback for background tasks
+      notifyCallback = ctx.ui.notify.bind(ctx.ui);
+
       const [sub, ...rest] = args.trim().split(/\s+/);
       const subArgs = rest.join(" ");
 
@@ -198,15 +215,20 @@ export default (pi: ExtensionAPI): void => {
     setInterval(() => runDream().catch(console.error), config.dream.intervalMs);
   }
 
-  // Retention
+  // Retention (runs silently in background - use /learn prune command to see results)
   if (config.retention.pruneOnStartup) {
     setTimeout(() => {
       const result = store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
-      if (result.deleted > 0) console.log(`[pi-learn] Pruned ${result.deleted} old records`);
+      if (result.deleted > 0) {
+        notify(`Pruned ${result.deleted} old records`, "info");
+      }
     }, 5000);
   }
   setInterval(() => {
-    store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
+    const result = store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
+    if (result.deleted > 0) {
+      notify(`Pruned ${result.deleted} old records`, "info");
+    }
   }, config.retention.pruneIntervalHours * 60 * 60 * 1000);
 };
 

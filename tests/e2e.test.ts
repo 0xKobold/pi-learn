@@ -23,14 +23,17 @@ import type { PeerCard, Conclusion, Summary, Observation } from "../src/shared.j
 
 const testDir = path.join(os.tmpdir(), `pi-learn-e2e-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
 const settingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
-const originalSettings = fs.existsSync(settingsPath) ? fs.readFileSync(settingsPath, "utf-8") : null;
+let originalSettings: string | null = null;
 
-beforeEach(() => {
+beforeEach(async () => {
   fs.mkdirSync(testDir, { recursive: true });
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  if (fs.existsSync(settingsPath)) {
+    originalSettings = fs.readFileSync(settingsPath, "utf-8");
+  }
 });
 
-afterEach(() => {
+afterEach(async () => {
   // Cleanup test databases
   try {
     const files = fs.readdirSync(testDir);
@@ -48,6 +51,7 @@ afterEach(() => {
   } else if (fs.existsSync(settingsPath)) {
     fs.unlinkSync(settingsPath);
   }
+  originalSettings = null;
 });
 
 // Mock fetch for Ollama API
@@ -58,9 +62,11 @@ global.fetch = mockFetch;
 // HELPER FUNCTIONS
 // ============================================================================
 
-function createTestStore(): SQLiteStore {
+async function createTestStore(): Promise<SQLiteStore> {
   const dbPath = path.join(testDir, `test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}.db`);
-  return createStore(dbPath);
+  const store = await createStore(dbPath);
+  await store.init();
+  return store;
 }
 
 function createTestConfig() {
@@ -106,7 +112,10 @@ function createTestReasoningEngine(): ReasoningEngine {
 function createMockContext() {
   return {
     sessionManager: { getSessionFile: () => `test-session-${Date.now()}` },
-    ui: { setStatus: vi.fn() },
+    ui: { 
+      setStatus: vi.fn(),
+      notify: vi.fn(),
+    },
   };
 }
 
@@ -126,17 +135,17 @@ function createToolExecutorsWithStore(store: SQLiteStore, contextAssembler: Cont
 // ============================================================================
 
 describe("E2E: Extension Initialization", () => {
-  it("initializes store with default configuration", () => {
-    const store = createTestStore();
+  it("initializes store with default configuration", async () => {
+    const store = await createTestStore();
     const contextAssembler = createContextAssembler(store);
 
     expect(store.getWorkspace("default")).toBeDefined();
     expect(contextAssembler).toBeDefined();
     
-    store;
+    store?.close();
   });
 
-  it("initializes with custom settings", () => {
+  it("initializes with custom settings", async () => {
     setupMockSettings({
       ollama: { baseUrl: "https://custom.ollama.cloud/v1" },
       learn: {
@@ -146,17 +155,17 @@ describe("E2E: Extension Initialization", () => {
       },
     });
 
-    const store = createTestStore();
+    const store = await createTestStore();
     store.getOrCreateWorkspace("custom-workspace");
     
     const ws = store.getWorkspace("custom-workspace");
     expect(ws?.id).toBe("custom-workspace");
     
-    store;
+    store?.close();
   });
 
-  it("creates default peer entities on init", () => {
-    const store = createTestStore();
+  it("creates default peer entities on init", async () => {
+    const store = await createTestStore();
     store.getOrCreateWorkspace("test-ws");
     store.getOrCreatePeer("test-ws", "user", "User", "user");
     store.getOrCreatePeer("test-ws", "agent", "Agent", "agent");
@@ -167,33 +176,33 @@ describe("E2E: Extension Initialization", () => {
     expect(userPeer?.type).toBe("user");
     expect(agentPeer?.type).toBe("agent");
     
-    store;
+    store?.close();
   });
 
-  it("handles missing settings file gracefully", () => {
+  it("handles missing settings file gracefully", async () => {
     // Remove settings if exists
     if (fs.existsSync(settingsPath)) {
       fs.unlinkSync(settingsPath);
     }
 
-    const store = createTestStore();
+    const store = await createTestStore();
     // Should not throw
     store.getOrCreateWorkspace("default");
     
-    store;
+    store?.close();
   });
 
-  it("handles corrupted settings file gracefully", () => {
+  it("handles corrupted settings file gracefully", async () => {
     fs.writeFileSync(settingsPath, "invalid json {{{");
 
-    const store = createTestStore();
+    const store = await createTestStore();
     store.getOrCreateWorkspace("default");
     
-    store;
+    store?.close();
   });
 
-  it("creates multiple workspaces independently", () => {
-    const store = createTestStore();
+  it("creates multiple workspaces independently", async () => {
+    const store = await createTestStore();
     
     store.getOrCreateWorkspace("workspace-a", "Workspace A");
     store.getOrCreateWorkspace("workspace-b", "Workspace B");
@@ -205,7 +214,7 @@ describe("E2E: Extension Initialization", () => {
     expect(wsB?.name).toBe("Workspace B");
     expect(wsA?.id).not.toBe(wsB?.id);
     
-    store;
+    store?.close();
   });
 });
 
@@ -220,7 +229,7 @@ describe("E2E: Tool Execution Flow", () => {
   let executors: ReturnType<typeof createToolExecutors>;
   let mockCtx: ReturnType<typeof createMockContext>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     mockFetch.mockReset();
     mockFetch.mockResolvedValue({
       ok: true,
@@ -229,7 +238,7 @@ describe("E2E: Tool Execution Flow", () => {
       })
     });
     
-    store = createTestStore();
+    store = await createTestStore();
     store.getOrCreateWorkspace("test-ws");
     store.getOrCreatePeer("test-ws", "user", "User", "user");
     
@@ -246,13 +255,13 @@ describe("E2E: Tool Execution Flow", () => {
     mockCtx = createMockContext();
   });
 
-  afterEach(() => {
-    store;
+  afterEach(async () => {
+    store?.close();
   });
 
   it("learn_add_message queues message for reasoning", async () => {
     const executor = executors.learn_add_message;
-    const result = await executor.execute({}, { content: "Hello, I love coding", role: "user" }, mockCtx);
+    const result = await executor.execute("tool", { content: "Hello, I love coding", role: "user" }, undefined, undefined, mockCtx);
 
     expect(result.details.queued).toBe(true);
     expect(reasoningEngine.getQueueSize()).toBeGreaterThanOrEqual(0); // Queue may process async
@@ -270,7 +279,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_get_context;
-    const result = await executor.execute({}, { peerId: "user" });
+    const result = await executor.execute("tool", { peerId: "user" }, undefined, undefined, mockCtx);
 
     expect(result.details.found).toBe(true);
     expect(result.content[0].text).toContain("developer");
@@ -287,7 +296,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_query;
-    const result = await executor.execute({}, { query: "TypeScript", topK: 5 });
+    const result = await executor.execute("tool", { query: "TypeScript", topK: 5 }, undefined, undefined, mockCtx);
 
     expect(result.details.found).toBe(true);
     expect(result.content[0].text).toContain("TypeScript");
@@ -300,7 +309,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_reason_now;
-    const result = await executor.execute({}, {}, mockCtx);
+    const result = await executor.execute("tool", {}, undefined, undefined, mockCtx);
 
     expect(result.content[0].text).toContain("conclusions");
     expect(result.details.conclusionCount).toBeGreaterThanOrEqual(1);
@@ -351,7 +360,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = dreamExecutors.learn_trigger_dream;
-    const result = await executor.execute({}, {}, mockCtx);
+    const result = await executor.execute("tool", {}, undefined, undefined, mockCtx);
 
     expect(result.details.success).toBe(true);
     expect(result.content[0].text).toContain("Dream cycle complete");
@@ -366,7 +375,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_prune;
-    const result = await executor.execute({}, {});
+    const result = await executor.execute("tool", {}, undefined, undefined, mockCtx);
 
     expect(result.content[0].text).toContain("Pruned");
     expect(result.details.deleted).toBeGreaterThanOrEqual(1);
@@ -379,7 +388,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_get_peer_card;
-    const result = await executor.execute({}, { peerId: "user" });
+    const result = await executor.execute("tool", { peerId: "user" }, undefined, undefined, mockCtx);
 
     expect(result.details.found).toBe(true);
     expect(result.details.card.name).toBe("Alice");
@@ -393,11 +402,11 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_update_peer_card;
-    const result = await executor.execute({}, {
+    const result = await executor.execute("tool", {
       peerId: "user",
       occupation: "Senior Dev",
       interests: ["TypeScript", "React"],
-    });
+    }, undefined, undefined, mockCtx);
 
     expect(result.details.success).toBe(true);
 
@@ -412,7 +421,7 @@ describe("E2E: Tool Execution Flow", () => {
     store.getOrCreatePeer("test-ws", "assistant", "Assistant", "agent");
 
     const executor = executors.learn_list_peers;
-    const result = await executor.execute({}, {});
+    const result = await executor.execute("tool", {}, undefined, undefined, mockCtx);
 
     expect(result.details.count).toBeGreaterThanOrEqual(3);
   });
@@ -428,7 +437,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_get_stats;
-    const result = await executor.execute({}, { peerId: "user" });
+    const result = await executor.execute("tool", { peerId: "user" }, undefined, undefined, mockCtx);
 
     expect(result.details.conclusionCount).toBe(1);
     expect(result.details.summaryCount).toBe(1);
@@ -445,7 +454,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_get_summaries;
-    const result = await executor.execute({}, { peerId: "user", limit: 10 });
+    const result = await executor.execute("tool", { peerId: "user", limit: 10 }, undefined, undefined, mockCtx);
 
     expect(result.details.count).toBe(2);
     expect(result.content[0].text).toContain("summary");
@@ -464,7 +473,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_search_sessions;
-    const result = await executor.execute({}, { query: "React", limit: 10 });
+    const result = await executor.execute("tool", { query: "React", limit: 10 }, undefined, undefined, mockCtx);
 
     expect(result.details.found).toBe(true);
     expect(result.details.results[0].sessionId).toBe("session-react");
@@ -482,7 +491,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_get_session;
-    const result = await executor.execute({}, { sessionId: "test-session", limit: 50 });
+    const result = await executor.execute("tool", { sessionId: "test-session", limit: 50 }, undefined, undefined, mockCtx);
 
     expect(result.details.messageCount).toBe(2);
     expect(result.content[0].text).toContain("Hello");
@@ -494,7 +503,7 @@ describe("E2E: Tool Execution Flow", () => {
     store.getOrCreateSession("test-ws", "session-2", ["user"]);
 
     const executor = executors.learn_list_sessions;
-    const result = await executor.execute({}, { limit: 10 });
+    const result = await executor.execute("tool", { limit: 10 }, undefined, undefined, mockCtx);
 
     expect(result.details.count).toBe(2);
     expect(result.details.sessions.length).toBe(2);
@@ -507,7 +516,7 @@ describe("E2E: Tool Execution Flow", () => {
     });
 
     const executor = executors.learn_export;
-    const result = await executor.execute({}, {});
+    const result = await executor.execute("tool", {}, undefined, undefined, mockCtx);
 
     expect(result.content[0].text).toContain("conclusions");
     expect(result.details.workspace).toBeDefined();
@@ -531,7 +540,7 @@ describe("E2E: Tool Execution Flow", () => {
     };
 
     const executor = executors.learn_import;
-    const result = await executor.execute({}, { data: JSON.stringify(importData), merge: true });
+    const result = await executor.execute("tool", { data: JSON.stringify(importData), merge: true }, undefined, undefined, mockCtx);
 
     expect(result.details.success).toBe(true);
     
@@ -541,7 +550,7 @@ describe("E2E: Tool Execution Flow", () => {
 
   it("learn_import handles invalid JSON gracefully", async () => {
     const executor = executors.learn_import;
-    const result = await executor.execute({}, { data: "not valid json {{{" });
+    const result = await executor.execute("tool", { data: "not valid json {{{" }, undefined, undefined, mockCtx);
 
     expect(result.details.success).toBe(false);
     expect(result.content[0].text).toContain("Import failed");
@@ -551,10 +560,10 @@ describe("E2E: Tool Execution Flow", () => {
     store.getOrCreateSession("test-ws", "tagged-session", ["user"]);
 
     const executor = executors.learn_tag_session;
-    const result = await executor.execute({}, { 
+    const result = await executor.execute("tool", { 
       sessionId: "tagged-session",
       addTags: ["important", "project-a"]
-    });
+    }, undefined, undefined, mockCtx);
 
     expect(result.details.success).toBe(true);
     
@@ -571,7 +580,7 @@ describe("E2E: Tool Execution Flow", () => {
     store.tagSession("test-ws", "session-rust", ["rust", "systems"]);
 
     const executor = executors.learn_get_sessions_by_tag;
-    const result = await executor.execute({}, { tag: "typescript", limit: 10 });
+    const result = await executor.execute("tool", { tag: "typescript", limit: 10 }, undefined, undefined, mockCtx);
 
     expect(result.details.count).toBe(1);
     expect(result.details.sessions[0].id).toBe("session-typescript");
@@ -585,7 +594,7 @@ describe("E2E: Tool Execution Flow", () => {
     store.tagSession("test-ws", "session-2", ["rust", "project"]);
 
     const executor = executors.learn_list_tags;
-    const result = await executor.execute({}, {});
+    const result = await executor.execute("tool", {}, undefined, undefined, mockCtx);
 
     expect(result.details.count).toBe(3); // typescript, rust, project
     expect(result.details.tags.some((t: any) => t.tag === "project")).toBe(true);
@@ -601,9 +610,9 @@ describe("E2E: Command Handlers", () => {
   let contextAssembler: ContextAssembler;
   let reasoningEngine: ReasoningEngine;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     mockFetch.mockReset();
-    store = createTestStore();
+    store = await createTestStore();
     store.getOrCreateWorkspace("test-ws");
     store.getOrCreatePeer("test-ws", "user", "User", "user");
     contextAssembler = createContextAssembler(store);
@@ -617,8 +626,8 @@ describe("E2E: Command Handlers", () => {
     });
   });
 
-  afterEach(() => {
-    store;
+  afterEach(async () => {
+    store?.close();
   });
 
   // Helper to execute a command handler (simulating /learn command)
@@ -753,9 +762,9 @@ describe("E2E: Event Handlers", () => {
   let store: SQLiteStore;
   let reasoningEngine: ReasoningEngine;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     mockFetch.mockReset();
-    store = createTestStore();
+    store = await createTestStore();
     store.getOrCreateWorkspace("test-ws");
     store.getOrCreatePeer("test-ws", "user", "User", "user");
     reasoningEngine = createTestReasoningEngine();
@@ -768,8 +777,8 @@ describe("E2E: Event Handlers", () => {
     });
   });
 
-  afterEach(() => {
-    store;
+  afterEach(async () => {
+    store?.close();
   });
 
   it("session_start event creates workspace", () => {
@@ -860,9 +869,9 @@ describe("E2E: Background Services", () => {
   let store: SQLiteStore;
   let reasoningEngine: ReasoningEngine;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     mockFetch.mockReset();
-    store = createTestStore();
+    store = await createTestStore();
     store.getOrCreateWorkspace("test-ws");
     store.getOrCreatePeer("test-ws", "user", "User", "user");
     reasoningEngine = createTestReasoningEngine();
@@ -875,8 +884,8 @@ describe("E2E: Background Services", () => {
     });
   });
 
-  afterEach(() => {
-    store;
+  afterEach(async () => {
+    store?.close();
   });
 
   it("dream scheduler runs on interval", async () => {
@@ -1058,15 +1067,15 @@ describe("E2E: Error Handling & Edge Cases", () => {
   let store: SQLiteStore;
   let contextAssembler: ContextAssembler;
 
-  beforeEach(() => {
-    store = createTestStore();
+  beforeEach(async () => {
+    store = await createTestStore();
     store.getOrCreateWorkspace("test-ws");
     store.getOrCreatePeer("test-ws", "user", "User", "user");
     contextAssembler = createContextAssembler(store);
   });
 
-  afterEach(() => {
-    store;
+  afterEach(async () => {
+    store?.close();
   });
 
   it("handles empty workspace gracefully", () => {
@@ -1200,16 +1209,17 @@ describe("E2E: Error Handling & Edge Cases", () => {
     expect(card?.name).toBe(unicodeContent);
   });
 
-  it("handles database path with special characters", () => {
+  it("handles database path with special characters", async () => {
     // Test with path containing spaces
     const specialDir = path.join(testDir, "path with spaces");
     fs.mkdirSync(specialDir, { recursive: true });
     const dbPath = path.join(specialDir, "test.db");
     
-    const specialStore = createStore(dbPath);
+    const specialStore = await createStore(dbPath);
+    await specialStore.init();
     specialStore.getOrCreateWorkspace("special-ws");
     expect(specialStore.getWorkspace("special-ws")).toBeDefined();
-    specialStore;
+    specialStore.close();
   });
 
   it("handles Ollama API error gracefully", async () => {
@@ -1253,7 +1263,7 @@ describe("E2E: Error Handling & Edge Cases", () => {
 // ============================================================================
 
 describe("E2E: Reasoning Engine Integration", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mockFetch.mockReset();
   });
 
@@ -1402,8 +1412,8 @@ describe("E2E: Tools Registration", () => {
     }
   });
 
-  it("tool executors match tool definitions", () => {
-    const store = createTestStore();
+  it("tool executors match tool definitions", async () => {
+    const store = await createTestStore();
     const contextAssembler = createContextAssembler(store);
     const reasoningEngine = createTestReasoningEngine();
     // Setup default mock for reasoning engine
@@ -1427,7 +1437,7 @@ describe("E2E: Tools Registration", () => {
       expect(typeof (executors as any)[toolName].execute).toBe("function");
     }
 
-    store;
+    store?.close();
   });
 });
 
@@ -1438,15 +1448,15 @@ describe("E2E: Tools Registration", () => {
 describe("E2E: Workspace/Peer/Session Lifecycle", () => {
   let store: SQLiteStore;
 
-  beforeEach(() => {
-    store = createTestStore();
+  beforeEach(async () => {
+    store = await createTestStore();
   });
 
-  afterEach(() => {
-    store;
+  afterEach(async () => {
+    store?.close();
   });
 
-  it("creates complete workspace hierarchy", () => {
+  it("creates complete workspace hierarchy", async () => {
     // Create workspace
     const ws = store.getOrCreateWorkspace("my-workspace", "My Workspace");
     expect(ws.id).toBe("my-workspace");
@@ -1475,7 +1485,7 @@ describe("E2E: Workspace/Peer/Session Lifecycle", () => {
     expect(messages.length).toBe(1);
   });
 
-  it("peer cards persist correctly", () => {
+  it("peer cards persist correctly", async () => {
     store.getOrCreatePeer("test-ws", "user", "User", "user");
 
     const initialCard: PeerCard = {
@@ -1514,7 +1524,7 @@ describe("E2E: Workspace/Peer/Session Lifecycle", () => {
     expect(finalCard?.goals).toHaveLength(2);
   });
 
-  it("sessions track message count", () => {
+  it("sessions track message count", async () => {
     const session = store.getOrCreateSession("test-ws", "counting-session", ["user"]);
     expect(session.messageCount).toBe(0);
 
@@ -1531,7 +1541,7 @@ describe("E2E: Workspace/Peer/Session Lifecycle", () => {
     expect(messages.length).toBe(2);
   });
 
-  it("observations persist and can be queried", () => {
+  it("observations persist and can be queried", async () => {
     const observation: Observation = {
       id: "obs-1",
       workspaceId: "test-ws",
@@ -1550,7 +1560,7 @@ describe("E2E: Workspace/Peer/Session Lifecycle", () => {
     expect(observations[0].content).toBe("Test observation");
   });
 
-  it("unprocessed observations can be retrieved", () => {
+  it("unprocessed observations can be retrieved", async () => {
     const obs1: Observation = {
       id: "obs-1",
       workspaceId: "test-ws",

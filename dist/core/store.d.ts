@@ -1,11 +1,22 @@
 /**
  * SQLite Store Module - Database operations for pi-learn
+ * Uses sql.js (WebAssembly SQLite) for cross-runtime compatibility
  */
 import type { Workspace, Peer, Session, Conclusion, Summary, PeerCard, Observation, PeerRepresentation, ExportData } from "../shared.js";
-export declare function createStore(dbPath: string): SQLiteStore;
+export declare function createStore(dbPath: string): Promise<SQLiteStore>;
 export declare class SQLiteStore {
     private db;
+    private dbPath;
+    private saveTimer;
     constructor(dbPath: string);
+    init(): Promise<void>;
+    private scheduleSave;
+    private saveToDisk;
+    private run;
+    private exec;
+    private prepare;
+    private getOne;
+    private getAll;
     private initTables;
     private migrate;
     /**

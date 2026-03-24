@@ -21,8 +21,9 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 describe("Integration: Store + Context Assembler", () => {
-  it("assembles context from multiple data types", () => {
-    const store = createStore(path.join(testDir, "ctx1.db"));
+  it("assembles context from multiple data types", async () => {
+    const store = await createStore(path.join(testDir, "ctx1.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
 
@@ -44,11 +45,12 @@ describe("Integration: Store + Context Assembler", () => {
     expect(context).toContain("deductive");
     expect(context).toContain("dark mode");
     expect(context).toContain("Test User");
-    store;
+    store.close();
   });
 
   it("searches similar conclusions with keyword matching", async () => {
-    const store = createStore(path.join(testDir, "ctx2.db"));
+    const store = await createStore(path.join(testDir, "ctx2.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
 
@@ -66,11 +68,12 @@ describe("Integration: Store + Context Assembler", () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].content).toContain("Python");
-    store;
+    store.close();
   });
 
-  it("aggregates memory stats correctly", () => {
-    const store = createStore(path.join(testDir, "ctx3.db"));
+  it("aggregates memory stats correctly", async () => {
+    const store = await createStore(path.join(testDir, "ctx3.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
 
@@ -93,11 +96,12 @@ describe("Integration: Store + Context Assembler", () => {
     expect(stats.conclusionCount).toBe(2);
     expect(stats.hasPeerCard).toBe(true);
     expect(stats.topInterests).toContain("AI");
-    store;
+    store.close();
   });
 
-  it("handles workspace isolation", () => {
-    const store = createStore(path.join(testDir, "ctx4.db"));
+  it("handles workspace isolation", async () => {
+    const store = await createStore(path.join(testDir, "ctx4.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws1");
     store.getOrCreateWorkspace("ws2");
     store.getOrCreatePeer("ws1", "user", "User 1", "user");
@@ -113,7 +117,7 @@ describe("Integration: Store + Context Assembler", () => {
 
     expect(card1?.name).toBe("Workspace 1 User");
     expect(card2).toBeNull();
-    store;
+    store.close();
   });
 });
 
@@ -209,8 +213,9 @@ UPDATED_CONCLUSIONS:
 });
 
 describe("Integration: Export/Import Workflow", () => {
-  it("preserves all data types during round-trip", () => {
-    const store1 = createStore(path.join(testDir, "export1.db"));
+  it("preserves all data types during round-trip", async () => {
+    const store1 = await createStore(path.join(testDir, "export1.db"));
+    await store1.init();
     store1.getOrCreateWorkspace("ws");
     store1.getOrCreatePeer("ws", "user", "User", "user");
     store1.getOrCreateSession("ws", "session1", ["user"]);
@@ -229,9 +234,10 @@ describe("Integration: Export/Import Workflow", () => {
     });
 
     const exported = store1.exportAll("ws");
-    store1;
+    store1.close();
 
-    const store2 = createStore(path.join(testDir, "export2.db"));
+    const store2 = await createStore(path.join(testDir, "export2.db"));
+    await store2.init();
     store2.importAll("ws", exported, true);
 
     const card = store2.getPeerCard("ws", "user");
@@ -241,11 +247,12 @@ describe("Integration: Export/Import Workflow", () => {
     const conclusions = store2.getConclusions("ws", "user", 10);
     expect(conclusions.length).toBe(1);
     expect(conclusions[0].content).toBe("Test conclusion");
-    store2;
+    store2.close();
   });
 
-  it("replaces data when merge is false", () => {
-    const store1 = createStore(path.join(testDir, "merge1.db"));
+  it("replaces data when merge is false", async () => {
+    const store1 = await createStore(path.join(testDir, "merge1.db"));
+    await store1.init();
     store1.getOrCreateWorkspace("ws");
     store1.getOrCreatePeer("ws", "user", "User", "user");
     store1.savePeerCard("ws", {
@@ -254,9 +261,10 @@ describe("Integration: Export/Import Workflow", () => {
     });
 
     const exported = store1.exportAll("ws");
-    store1;
+    store1.close();
 
-    const store2 = createStore(path.join(testDir, "merge2.db"));
+    const store2 = await createStore(path.join(testDir, "merge2.db"));
+    await store2.init();
     store2.getOrCreateWorkspace("ws");
     store2.getOrCreatePeer("ws", "user", "User", "user");
     store2.savePeerCard("ws", {
@@ -267,15 +275,16 @@ describe("Integration: Export/Import Workflow", () => {
     store2.importAll("ws", exported, false);
 
     const card = store2.getPeerCard("ws", "user");
-    expect(card?.name).toBe("Original"); // Old data replaced
+    expect(card?.name).toBe("Original");
     expect(card?.occupation).toBe("Dev");
-    store2;
+    store2.close();
   });
 });
 
 describe("Integration: Retention Policies", () => {
-  it("prunes messages but keeps conclusions", () => {
-    const store = createStore(path.join(testDir, "retention1.db"));
+  it("prunes messages but keeps conclusions", async () => {
+    const store = await createStore(path.join(testDir, "retention1.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
     store.getOrCreateSession("ws", "s1", ["user"]);
@@ -303,11 +312,12 @@ describe("Integration: Retention Policies", () => {
     const conclusions = store.getConclusions("ws", "user", 10);
     expect(conclusions.length).toBe(1);
     expect(conclusions[0].content).toBe("Recent insight");
-    store;
+    store.close();
   });
 
-  it("prunes based on all retention parameters", () => {
-    const store = createStore(path.join(testDir, "retention2.db"));
+  it("prunes based on all retention parameters", async () => {
+    const store = await createStore(path.join(testDir, "retention2.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
 
@@ -327,13 +337,14 @@ describe("Integration: Retention Policies", () => {
     expect(result.deleted).toBe(1); // Only summary deleted
     const conclusions = store.getConclusions("ws", "user", 10);
     expect(conclusions.length).toBe(1); // Conclusion still there
-    store;
+    store.close();
   });
 });
 
 describe("Integration: Session Search", () => {
-  it("finds sessions by keyword in messages", () => {
-    const store = createStore(path.join(testDir, "search1.db"));
+  it("finds sessions by keyword in messages", async () => {
+    const store = await createStore(path.join(testDir, "search1.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
     store.getOrCreateSession("ws", "session-typescript", ["user"]);
@@ -352,11 +363,12 @@ describe("Integration: Session Search", () => {
     expect(results.length).toBe(1);
     expect(results[0].sessionId).toBe("session-typescript");
     expect(results[0].snippet).toContain("TypeScript");
-    store;
+    store.close();
   });
 
-  it("returns multiple sessions for common terms", () => {
-    const store = createStore(path.join(testDir, "search2.db"));
+  it("returns multiple sessions for common terms", async () => {
+    const store = await createStore(path.join(testDir, "search2.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
     store.getOrCreateSession("ws", "s1", ["user"]);
@@ -373,13 +385,14 @@ describe("Integration: Session Search", () => {
 
     const results = store.searchSessions("ws", "AI", 10);
     expect(results.length).toBe(2);
-    store;
+    store.close();
   });
 });
 
 describe("Integration: Cross-Peer Observations", () => {
-  it("saves and retrieves cross-peer observations", () => {
-    const store = createStore(path.join(testDir, "xpeer1.db"));
+  it("saves and retrieves cross-peer observations", async () => {
+    const store = await createStore(path.join(testDir, "xpeer1.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
     store.getOrCreatePeer("ws", "agent", "Agent", "agent");
@@ -407,11 +420,12 @@ describe("Integration: Cross-Peer Observations", () => {
     expect(userObs.length).toBe(1);
     expect(userObs[0].aboutPeerId).toBe("agent");
     
-    store;
+    store.close();
   });
 
-  it("builds perspective context between peers", () => {
-    const store = createStore(path.join(testDir, "xpeer2.db"));
+  it("builds perspective context between peers", async () => {
+    const store = await createStore(path.join(testDir, "xpeer2.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
     store.getOrCreatePeer("ws", "agent", "Agent", "agent");
@@ -445,13 +459,14 @@ describe("Integration: Cross-Peer Observations", () => {
     expect(perspective).toContain("Agent prefers TypeScript");
     expect(perspective).toContain("Coding Agent");
     
-    store;
+    store.close();
   });
 });
 
 describe("Integration: Message Metadata", () => {
-  it("saves and retrieves message with metadata", () => {
-    const store = createStore(path.join(testDir, "msg-meta.db"));
+  it("saves and retrieves message with metadata", async () => {
+    const store = await createStore(path.join(testDir, "msg-meta.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
     store.getOrCreateSession("ws", "s1", ["user"]);
@@ -470,13 +485,14 @@ describe("Integration: Message Metadata", () => {
     expect(messages.length).toBe(1);
     expect(messages[0].metadata).toBeDefined();
     
-    store;
+    store.close();
   });
 });
 
 describe("Integration: Batch Operations", () => {
-  it("batch inserts multiple messages efficiently", () => {
-    const store = createStore(path.join(testDir, "batch.db"));
+  it("batch inserts multiple messages efficiently", async () => {
+    const store = await createStore(path.join(testDir, "batch.db"));
+    await store.init();
     store.getOrCreateWorkspace("ws");
     store.getOrCreatePeer("ws", "user", "User", "user");
     store.getOrCreateSession("ws", "s1", ["user"]);
@@ -493,6 +509,6 @@ describe("Integration: Batch Operations", () => {
     const retrieved = store.getMessages("ws", "s1", 10);
     expect(retrieved.length).toBe(3);
     
-    store;
+    store.close();
   });
 });
