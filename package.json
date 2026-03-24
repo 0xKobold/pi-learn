@@ -1,0 +1,66 @@
+{
+  "name": "@0xkobold/pi-learn",
+  "version": "0.1.0",
+  "description": "Open-source memory infrastructure for pi agents - inspired by Honcho. Provides peer representations, reasoning, and context assembly for stateful AI agents.",
+  "keywords": [
+    "pi-package",
+    "memory",
+    "agent",
+    "honcho",
+    "learning"
+  ],
+  "author": "Warren Gates <wbgates@gmail.com>",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./shared": {
+      "import": "./dist/shared.js",
+      "types": "./dist/shared.d.ts"
+    },
+    "./renderers": {
+      "import": "./dist/renderers.js",
+      "types": "./dist/renderers.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "image": "https://ollama.com/public/ollama.png"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.6.0",
+    "@sinclair/typebox": ">=0.32.0"
+  },
+  "dependencies": {
+    "@0xkobold/pi-ollama": "^0.2.0",
+    "better-sqlite3": "^12.8.0"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.62.0",
+    "@mariozechner/pi-tui": "^0.62.0",
+    "@sinclair/typebox": "^0.34.48",
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.1"
+  },
+  "vitest": {
+    "include": ["tests/**/*.test.ts"],
+    "exclude": ["node_modules", "dist"]
+  }
+}

@@ -1,0 +1,255 @@
+/**
+ * Pi-Learn: Open-Source Memory Infrastructure for pi Agents
+ * 
+ * Modular Architecture (DRY/KISS/Functional):
+ * - core/store.ts: SQLite operations
+ * - core/reasoning.ts: LLM reasoning engine
+ * - core/context.ts: Context assembly
+ * - tools/index.ts: Tool definitions and executors
+ * - renderers.ts: TUI components
+ */
+
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-coding-agent";
+import { Type, Static } from "@sinclair/typebox";
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
+
+// Core modules
+import { createStore } from "./core/store.js";
+import { createReasoningEngine, DEFAULT_RETRY_CONFIG } from "./core/reasoning.js";
+import { createContextAssembler } from "./core/context.js";
+
+// Tools
+import { TOOLS, createToolExecutors, type ToolsConfig } from "./tools/index.js";
+
+// Shared
+import {
+  DEFAULT_RETENTION,
+  DEFAULT_DREAM,
+  DEFAULT_TOKEN_BATCH_SIZE,
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_REASONING_MODEL,
+} from "./shared.js";
+
+// ============================================================================
+// MAIN EXTENSION
+// ============================================================================
+
+export default (pi: ExtensionAPI): void => {
+  // Load configuration
+  const config = loadConfig();
+
+  // Initialize database
+  const dbPath = path.join(os.homedir(), ".pi", "memory", "pi-learn.db");
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const store = createStore(dbPath);
+
+  // Initialize core components
+  const reasoningEngine = createReasoningEngine({
+    ollamaBaseUrl: config.ollamaBaseUrl,
+    ollamaApiKey: config.ollamaApiKey,
+    reasoningModel: config.reasoningModel,
+    embeddingModel: config.embeddingModel,
+    tokenBatchSize: config.tokenBatchSize,
+    retry: config.retry,
+  });
+
+  const contextAssembler = createContextAssembler(store);
+
+  // Ensure default workspace exists
+  store.getOrCreateWorkspace(config.workspaceId, "Default Workspace");
+  store.getOrCreatePeer(config.workspaceId, "user", "User", "user");
+  store.getOrCreatePeer(config.workspaceId, "agent", "Agent", "agent");
+
+  // Run dream function
+  const runDream = async (): Promise<void> => {
+    if (!config.dream.enabled) return;
+    const messages = store.getRecentMessages(config.workspaceId, "user", config.dream.batchSize);
+    if (messages.length < config.dream.minMessagesSinceLastDream) return;
+    const conclusions = store.getConclusions(config.workspaceId, "user", 100);
+    const result = await reasoningEngine.dream(messages.map((m: any) => ({ role: m.role, content: m.content })), conclusions);
+    for (const c of result.newConclusions) {
+      store.saveConclusion(config.workspaceId, {
+        id: crypto.randomUUID(),
+        peerId: "user",
+        type: c.type,
+        content: c.content,
+        premises: c.premises,
+        confidence: c.confidence,
+        createdAt: Date.now(),
+        sourceSessionId: messages[0]?.session_id || "dream",
+      });
+    }
+  };
+
+  // Tools config
+  const toolsConfig: ToolsConfig = {
+    workspaceId: config.workspaceId,
+    retention: config.retention,
+    dream: config.dream,
+  };
+
+  // Create and register tools
+  const executors = createToolExecutors({ store, contextAssembler, reasoningEngine, config: toolsConfig, runDream });
+
+  for (const [name, def] of Object.entries(TOOLS)) {
+    const executor = executors[name as keyof typeof executors];
+    if (!executor) continue;
+
+    const toolDef: any = {
+      name,
+      label: def.label,
+      description: def.description,
+      parameters: def.params,
+      execute: executor.execute,
+    };
+
+    // Add renderResult if the executor has one
+    if ('renderResult' in executor) {
+      toolDef.renderResult = executor.renderResult;
+    }
+
+    pi.registerTool(toolDef);
+  }
+
+  // ========================================================================
+  // COMMANDS
+  // ========================================================================
+
+  pi.registerCommand("learn", {
+    description: "Pi-learn memory management",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const [sub, ...rest] = args.trim().split(/\s+/);
+      const subArgs = rest.join(" ");
+
+      switch (sub) {
+        case "status": {
+          const stats = contextAssembler.getMemoryStats(config.workspaceId, "user");
+          ctx.ui.notify(`Memory Status: ${stats.conclusionCount} conclusions, ${stats.summaryCount} summaries`, "info");
+          return;
+        }
+        case "context": {
+          const assembledCtx = contextAssembler.assembleContext(config.workspaceId, "user");
+          ctx.ui.notify(assembledCtx || "No context available", "info");
+          return;
+        }
+        case "dream":
+          ctx.ui.setStatus("learn", "Dreaming...");
+          await runDream();
+          ctx.ui.notify("Dream cycle complete", "info");
+          return;
+        case "prune": {
+          const result = store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
+          ctx.ui.notify(`Pruned ${result.deleted} records`, "info");
+          return;
+        }
+        case "search":
+          if (!subArgs) {
+            ctx.ui.notify("Usage: /learn search <query>", "info");
+            return;
+          }
+          const results = store.searchSessions(config.workspaceId, subArgs, 5);
+          ctx.ui.notify(results.length ? results.map((r, i) => `${i + 1}. ${r.snippet}`).join("\n") : "No results found", "info");
+          return;
+        case "sessions": {
+          const sessions = store.getAllSessions(config.workspaceId);
+          ctx.ui.notify(sessions.length ? sessions.slice(0, 10).map((s, i) => `${i + 1}. ${s.id}`).join("\n") : "No sessions", "info");
+          return;
+        }
+        default:
+          ctx.ui.notify("Commands: status, context, dream, prune, search <query>, sessions", "info");
+          return;
+      }
+    },
+  });
+
+  // ========================================================================
+  // EVENT HANDLERS
+  // ========================================================================
+
+  pi.on("session_start", async (_event, ctx) => {
+    store.getOrCreateWorkspace(config.workspaceId);
+    ctx.ui.notify("Pi-learn memory extension loaded", "info");
+  });
+
+  pi.on("tool_result", async (event, ctx) => {
+    // After tool execution, optionally update memory with tool results
+    if (!config.reasoningEnabled) return;
+    
+    // Log tool activity for learning purposes
+    const toolName = event.toolName;
+    if (toolName && toolName.startsWith("learn_")) {
+      // Skip - these are our own tools
+      return;
+    }
+    
+    // Could queue tool results for reasoning here if desired
+  });
+
+  // ========================================================================
+  // BACKGROUND SERVICES
+  // ========================================================================
+
+  // Dream scheduler
+  if (config.dream.enabled) {
+    setTimeout(() => runDream().catch(console.error), 30000);
+    setInterval(() => runDream().catch(console.error), config.dream.intervalMs);
+  }
+
+  // Retention
+  if (config.retention.pruneOnStartup) {
+    setTimeout(() => {
+      const result = store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
+      if (result.deleted > 0) console.log(`[pi-learn] Pruned ${result.deleted} old records`);
+    }, 5000);
+  }
+  setInterval(() => {
+    store.prune(config.retention.retentionDays, config.retention.summaryRetentionDays, config.retention.conclusionRetentionDays);
+  }, config.retention.pruneIntervalHours * 60 * 60 * 1000);
+};
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+interface Config {
+  workspaceId: string;
+  reasoningEnabled: boolean;
+  reasoningModel: string;
+  embeddingModel: string;
+  tokenBatchSize: number;
+  ollamaBaseUrl: string;
+  ollamaApiKey: string;
+  retention: { retentionDays: number; summaryRetentionDays: number; conclusionRetentionDays: number; pruneOnStartup: boolean; pruneIntervalHours: number };
+  dream: { enabled: boolean; intervalMs: number; minMessagesSinceLastDream: number; batchSize: number };
+  retry: { maxRetries: number; retryDelayMs: number; timeoutMs: number };
+}
+
+function loadConfig(): Config {
+  const settingsPath = path.join(os.homedir(), ".pi", "agent", "settings.json");
+  let settings: Record<string, any> = {};
+  try {
+    if (fs.existsSync(settingsPath)) {
+      settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    }
+  } catch (e) {
+    console.warn("[pi-learn] Failed to load settings:", e);
+  }
+
+  const learnSettings = settings.learn || {};
+
+  return {
+    workspaceId: learnSettings.workspaceId || "default",
+    reasoningEnabled: learnSettings.reasoningEnabled ?? true,
+    reasoningModel: learnSettings.reasoningModel || DEFAULT_REASONING_MODEL,
+    embeddingModel: learnSettings.embeddingModel || DEFAULT_EMBEDDING_MODEL,
+    tokenBatchSize: learnSettings.tokenBatchSize || DEFAULT_TOKEN_BATCH_SIZE,
+    ollamaBaseUrl: settings.ollama?.baseUrl || "http://localhost:11434",
+    ollamaApiKey: settings.ollama?.apiKey || "",
+    retention: { ...DEFAULT_RETENTION, ...learnSettings.retention },
+    dream: { ...DEFAULT_DREAM, ...learnSettings.dream },
+    retry: { ...DEFAULT_RETRY_CONFIG, ...learnSettings.retry },
+  };
+}
