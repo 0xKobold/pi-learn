@@ -10,7 +10,7 @@ Open-source memory infrastructure for pi agents, inspired by [Honcho](https://ho
 - **Vector Search**: Semantic similarity search using embeddings
 - **Dreaming**: Background/creative reasoning synthesis
 - **Retention Policies**: Automatic data pruning
-- **SQLite Storage**: High-performance local database
+- **SQLite Storage**: High-performance local database using sql.js (WebAssembly)
 
 ## Architecture
 
