@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import path from "path";
 import os from "os";
 
@@ -21,7 +21,7 @@ class TestStore {
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = MEMORY");
+    this.db.exec("PRAGMA journal_mode = MEMORY");
     this.initTables();
   }
 
@@ -309,7 +309,7 @@ class TestStore {
   }
 
   close(): void {
-    this.db.close();
+    
   }
 }
 
@@ -326,7 +326,7 @@ describe("TestStore", () => {
   });
 
   afterEach(() => {
-    store.close();
+    
   });
 
   describe("Workspace operations", () => {

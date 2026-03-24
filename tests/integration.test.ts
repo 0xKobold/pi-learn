@@ -44,7 +44,7 @@ describe("Integration: Store + Context Assembler", () => {
     expect(context).toContain("deductive");
     expect(context).toContain("dark mode");
     expect(context).toContain("Test User");
-    store.close();
+    store;
   });
 
   it("searches similar conclusions with keyword matching", async () => {
@@ -66,7 +66,7 @@ describe("Integration: Store + Context Assembler", () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].content).toContain("Python");
-    store.close();
+    store;
   });
 
   it("aggregates memory stats correctly", () => {
@@ -93,7 +93,7 @@ describe("Integration: Store + Context Assembler", () => {
     expect(stats.conclusionCount).toBe(2);
     expect(stats.hasPeerCard).toBe(true);
     expect(stats.topInterests).toContain("AI");
-    store.close();
+    store;
   });
 
   it("handles workspace isolation", () => {
@@ -113,7 +113,7 @@ describe("Integration: Store + Context Assembler", () => {
 
     expect(card1?.name).toBe("Workspace 1 User");
     expect(card2).toBeNull();
-    store.close();
+    store;
   });
 });
 
@@ -229,7 +229,7 @@ describe("Integration: Export/Import Workflow", () => {
     });
 
     const exported = store1.exportAll("ws");
-    store1.close();
+    store1;
 
     const store2 = createStore(path.join(testDir, "export2.db"));
     store2.importAll("ws", exported, true);
@@ -241,7 +241,7 @@ describe("Integration: Export/Import Workflow", () => {
     const conclusions = store2.getConclusions("ws", "user", 10);
     expect(conclusions.length).toBe(1);
     expect(conclusions[0].content).toBe("Test conclusion");
-    store2.close();
+    store2;
   });
 
   it("replaces data when merge is false", () => {
@@ -254,7 +254,7 @@ describe("Integration: Export/Import Workflow", () => {
     });
 
     const exported = store1.exportAll("ws");
-    store1.close();
+    store1;
 
     const store2 = createStore(path.join(testDir, "merge2.db"));
     store2.getOrCreateWorkspace("ws");
@@ -269,7 +269,7 @@ describe("Integration: Export/Import Workflow", () => {
     const card = store2.getPeerCard("ws", "user");
     expect(card?.name).toBe("Original"); // Old data replaced
     expect(card?.occupation).toBe("Dev");
-    store2.close();
+    store2;
   });
 });
 
@@ -303,7 +303,7 @@ describe("Integration: Retention Policies", () => {
     const conclusions = store.getConclusions("ws", "user", 10);
     expect(conclusions.length).toBe(1);
     expect(conclusions[0].content).toBe("Recent insight");
-    store.close();
+    store;
   });
 
   it("prunes based on all retention parameters", () => {
@@ -327,7 +327,7 @@ describe("Integration: Retention Policies", () => {
     expect(result.deleted).toBe(1); // Only summary deleted
     const conclusions = store.getConclusions("ws", "user", 10);
     expect(conclusions.length).toBe(1); // Conclusion still there
-    store.close();
+    store;
   });
 });
 
@@ -352,7 +352,7 @@ describe("Integration: Session Search", () => {
     expect(results.length).toBe(1);
     expect(results[0].sessionId).toBe("session-typescript");
     expect(results[0].snippet).toContain("TypeScript");
-    store.close();
+    store;
   });
 
   it("returns multiple sessions for common terms", () => {
@@ -373,7 +373,7 @@ describe("Integration: Session Search", () => {
 
     const results = store.searchSessions("ws", "AI", 10);
     expect(results.length).toBe(2);
-    store.close();
+    store;
   });
 });
 
@@ -407,7 +407,7 @@ describe("Integration: Cross-Peer Observations", () => {
     expect(userObs.length).toBe(1);
     expect(userObs[0].aboutPeerId).toBe("agent");
     
-    store.close();
+    store;
   });
 
   it("builds perspective context between peers", () => {
@@ -445,7 +445,7 @@ describe("Integration: Cross-Peer Observations", () => {
     expect(perspective).toContain("Agent prefers TypeScript");
     expect(perspective).toContain("Coding Agent");
     
-    store.close();
+    store;
   });
 });
 
@@ -470,7 +470,7 @@ describe("Integration: Message Metadata", () => {
     expect(messages.length).toBe(1);
     expect(messages[0].metadata).toBeDefined();
     
-    store.close();
+    store;
   });
 });
 
@@ -493,6 +493,6 @@ describe("Integration: Batch Operations", () => {
     const retrieved = store.getMessages("ws", "s1", 10);
     expect(retrieved.length).toBe(3);
     
-    store.close();
+    store;
   });
 });

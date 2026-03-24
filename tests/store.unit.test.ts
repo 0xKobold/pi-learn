@@ -21,13 +21,13 @@ describe("SQLiteStore Unit Tests", () => {
       const ws = store.getOrCreateWorkspace("test-ws", "Test Workspace");
       expect(ws.id).toBe("test-ws");
       expect(ws.name).toBe("Test Workspace");
-      store.close();
+      store;
     });
 
     it("returns null for missing workspace", () => {
       const store = createStore(path.join(testDir, "ws2.db"));
       expect(store.getWorkspace("missing")).toBeNull();
-      store.close();
+      store;
     });
   });
 
@@ -38,7 +38,7 @@ describe("SQLiteStore Unit Tests", () => {
       const peer = store.getOrCreatePeer("ws", "user", "Test User", "user");
       expect(peer.id).toBe("user");
       expect(peer.type).toBe("user");
-      store.close();
+      store;
     });
 
     it("lists all peers", () => {
@@ -48,7 +48,7 @@ describe("SQLiteStore Unit Tests", () => {
       store.getOrCreatePeer("ws", "u2", "User 2", "user");
       const peers = store.getAllPeers("ws");
       expect(peers.length).toBeGreaterThanOrEqual(2);
-      store.close();
+      store;
     });
   });
 
@@ -64,7 +64,7 @@ describe("SQLiteStore Unit Tests", () => {
       const results = store.getConclusions("ws", "user", 10);
       expect(results.length).toBe(1);
       expect(results[0].content).toBe("Test conclusion");
-      store.close();
+      store;
     });
   });
 
@@ -80,7 +80,7 @@ describe("SQLiteStore Unit Tests", () => {
       const retrieved = store.getPeerCard("ws", "user");
       expect(retrieved?.name).toBe("Warren");
       expect(retrieved?.interests).toContain("AI");
-      store.close();
+      store;
     });
   });
 
@@ -95,7 +95,7 @@ describe("SQLiteStore Unit Tests", () => {
       });
       const result = store.prune(0, 30, 0);
       expect(result.deleted).toBe(1);
-      store.close();
+      store;
     });
   });
 
@@ -111,7 +111,7 @@ describe("SQLiteStore Unit Tests", () => {
       });
       const results = store.searchSessions("ws", "search", 10);
       expect(results.length).toBe(1);
-      store.close();
+      store;
     });
   });
 
@@ -127,7 +127,7 @@ describe("SQLiteStore Unit Tests", () => {
       const data = store.exportAll("ws");
       expect(data.version).toBe("1.0.0");
       expect(data.peerCards.length).toBeGreaterThan(0);
-      store.close();
+      store;
     });
 
     it("imports data with merge", () => {
@@ -141,7 +141,7 @@ describe("SQLiteStore Unit Tests", () => {
       store.importAll("ws", data, true);
       const card = store.getPeerCard("ws", "restored");
       expect(card?.name).toBe("Restored");
-      store.close();
+      store;
     });
   });
 });

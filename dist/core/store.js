@@ -1,7 +1,7 @@
 /**
  * SQLite Store Module - Database operations for pi-learn
  */
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { cosineSimilarity } from "../shared.js";
 // ============================================================================
 // FACTORY FUNCTION
@@ -16,8 +16,8 @@ export class SQLiteStore {
     db;
     constructor(dbPath) {
         this.db = new Database(dbPath);
-        this.db.pragma("journal_mode = WAL");
-        this.db.pragma("foreign_keys = OFF");
+        this.db.exec("PRAGMA journal_mode = WAL");
+        this.db.exec("PRAGMA foreign_keys = OFF");
         this.initTables();
         this.migrate();
         this.verifyAndFixSchema();

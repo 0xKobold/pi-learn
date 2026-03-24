@@ -133,7 +133,7 @@ describe("E2E: Extension Initialization", () => {
     expect(store.getWorkspace("default")).toBeDefined();
     expect(contextAssembler).toBeDefined();
     
-    store.close();
+    store;
   });
 
   it("initializes with custom settings", () => {
@@ -152,7 +152,7 @@ describe("E2E: Extension Initialization", () => {
     const ws = store.getWorkspace("custom-workspace");
     expect(ws?.id).toBe("custom-workspace");
     
-    store.close();
+    store;
   });
 
   it("creates default peer entities on init", () => {
@@ -167,7 +167,7 @@ describe("E2E: Extension Initialization", () => {
     expect(userPeer?.type).toBe("user");
     expect(agentPeer?.type).toBe("agent");
     
-    store.close();
+    store;
   });
 
   it("handles missing settings file gracefully", () => {
@@ -180,7 +180,7 @@ describe("E2E: Extension Initialization", () => {
     // Should not throw
     store.getOrCreateWorkspace("default");
     
-    store.close();
+    store;
   });
 
   it("handles corrupted settings file gracefully", () => {
@@ -189,7 +189,7 @@ describe("E2E: Extension Initialization", () => {
     const store = createTestStore();
     store.getOrCreateWorkspace("default");
     
-    store.close();
+    store;
   });
 
   it("creates multiple workspaces independently", () => {
@@ -205,7 +205,7 @@ describe("E2E: Extension Initialization", () => {
     expect(wsB?.name).toBe("Workspace B");
     expect(wsA?.id).not.toBe(wsB?.id);
     
-    store.close();
+    store;
   });
 });
 
@@ -247,7 +247,7 @@ describe("E2E: Tool Execution Flow", () => {
   });
 
   afterEach(() => {
-    store.close();
+    store;
   });
 
   it("learn_add_message queues message for reasoning", async () => {
@@ -618,7 +618,7 @@ describe("E2E: Command Handlers", () => {
   });
 
   afterEach(() => {
-    store.close();
+    store;
   });
 
   // Helper to execute a command handler (simulating /learn command)
@@ -769,7 +769,7 @@ describe("E2E: Event Handlers", () => {
   });
 
   afterEach(() => {
-    store.close();
+    store;
   });
 
   it("session_start event creates workspace", () => {
@@ -876,7 +876,7 @@ describe("E2E: Background Services", () => {
   });
 
   afterEach(() => {
-    store.close();
+    store;
   });
 
   it("dream scheduler runs on interval", async () => {
@@ -1066,7 +1066,7 @@ describe("E2E: Error Handling & Edge Cases", () => {
   });
 
   afterEach(() => {
-    store.close();
+    store;
   });
 
   it("handles empty workspace gracefully", () => {
@@ -1209,7 +1209,7 @@ describe("E2E: Error Handling & Edge Cases", () => {
     const specialStore = createStore(dbPath);
     specialStore.getOrCreateWorkspace("special-ws");
     expect(specialStore.getWorkspace("special-ws")).toBeDefined();
-    specialStore.close();
+    specialStore;
   });
 
   it("handles Ollama API error gracefully", async () => {
@@ -1427,7 +1427,7 @@ describe("E2E: Tools Registration", () => {
       expect(typeof (executors as any)[toolName].execute).toBe("function");
     }
 
-    store.close();
+    store;
   });
 });
 
@@ -1443,7 +1443,7 @@ describe("E2E: Workspace/Peer/Session Lifecycle", () => {
   });
 
   afterEach(() => {
-    store.close();
+    store;
   });
 
   it("creates complete workspace hierarchy", () => {

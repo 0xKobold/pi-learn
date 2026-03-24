@@ -2,7 +2,7 @@
  * SQLite Store Module - Database operations for pi-learn
  */
 
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import type {
   Workspace,
   Peer,
@@ -29,12 +29,12 @@ export function createStore(dbPath: string): SQLiteStore {
 // ============================================================================
 
 export class SQLiteStore {
-  private db: Database.Database;
+  private db: Database;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = OFF");
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA foreign_keys = OFF");
     this.initTables();
     this.migrate();
     this.verifyAndFixSchema();
