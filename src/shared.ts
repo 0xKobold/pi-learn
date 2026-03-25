@@ -9,6 +9,13 @@
 // TYPES
 // ============================================================================
 
+/**
+ * Scope classification for conclusions and other data
+ * - 'user': Cross-project data (traits, interests, goals) - stored in __global__
+ * - 'project': Project-specific data - stored in project workspace
+ */
+export type Scope = "user" | "project";
+
 export interface Peer {
   id: string;
   name: string;
@@ -27,6 +34,7 @@ export interface Conclusion {
   createdAt: number;
   sourceSessionId: string;
   embedding?: number[];
+  scope: Scope;  // 'user' (global) or 'project' (local)
 }
 
 export interface Summary {
@@ -204,6 +212,11 @@ export const SHORT_SUMMARY_INTERVAL = 20;
 export const LONG_SUMMARY_INTERVAL = 60;
 export const DEFAULT_EMBEDDING_MODEL = "nomic-embed-text-v2-moe:latest";
 export const DEFAULT_REASONING_MODEL = "qwen3.5:latest";
+
+/**
+ * Global workspace ID for cross-project (user-scope) data
+ */
+export const GLOBAL_WORKSPACE_ID = "__global__";
 
 // ============================================================================
 // EMBEDDINGS (Ollama)

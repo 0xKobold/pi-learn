@@ -85,14 +85,15 @@ interface ReasoningOutput {
 
 ### Implementation Plan
 
-#### Phase 1: Database & Store
-- [ ] Migration to add scope column
-- [ ] `saveConclusion(workspaceId, conclusion, scope)`
-- [ ] `getConclusions(workspaceId, peerId, scope?)` - filter by scope
-- [ ] `getGlobalConclusions(peerId)` - get from __global__
-- [ ] Create __global__ workspace on init
+#### Phase 1: Database & Store ✅ (Complete)
+- [x] Migration to add scope column
+- [x] `saveConclusion(workspaceId, conclusion)` with scope field
+- [x] `getConclusions(workspaceId, peerId, scope?)` - filter by scope
+- [x] `getGlobalConclusions(peerId)` - get from __global__
+- [x] Create __global__ workspace on init
+- [x] `getBlendedRepresentation()` for context assembly
 
-#### Phase 2: Context Assembly
+#### Phase 2: Context Assembly (Next)
 - [ ] `assembleContext()` blends global + local
 - [ ] `getGlobalContext(peerId)` - global only
 - [ ] `getProjectContext(workspaceId, peerId)` - project only

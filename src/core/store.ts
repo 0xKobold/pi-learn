@@ -15,7 +15,9 @@ import type {
   Observation,
   PeerRepresentation,
   ExportData,
+  Scope,
 } from "../shared.js";
+import { GLOBAL_WORKSPACE_ID } from "../shared.js";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 
 // ============================================================================
@@ -174,6 +176,7 @@ export class SQLiteStore {
         created_at INTEGER NOT NULL,
         source_session_id TEXT NOT NULL,
         embedding TEXT,
+        scope TEXT NOT NULL DEFAULT 'project',
         FOREIGN KEY (peer_id, workspace_id) REFERENCES peers(id, workspace_id),
         FOREIGN KEY (source_session_id, workspace_id) REFERENCES sessions(id, workspace_id)
       );
@@ -273,6 +276,17 @@ export class SQLiteStore {
     } catch {
       // Column may already exist
     }
+
+    // Migrate conclusions table to add scope column
+    try {
+      const columns = this.getAll("PRAGMA table_info(conclusions)");
+      const hasScope = columns.some(c => c.name === 'scope');
+      if (!hasScope) {
+        this.exec("ALTER TABLE conclusions ADD COLUMN scope TEXT NOT NULL DEFAULT 'project'");
+      }
+    } catch {
+      // Column may already exist
+    }
   }
 
   /**
@@ -285,11 +299,15 @@ export class SQLiteStore {
       sessions: ['tags'],
       observations: ['about_peer_id'],
       messages: ['metadata'],
+      conclusions: ['scope'],
     };
 
     const requiredIndexes: Record<string, Array<{ name: string; columns: string[] }>> = {
       observations: [
         { name: 'idx_observations_about', columns: ['about_peer_id', 'workspace_id'] },
+      ],
+      conclusions: [
+        { name: 'idx_conclusions_scope', columns: ['scope', 'workspace_id'] },
       ],
     };
 
@@ -483,13 +501,24 @@ export class SQLiteStore {
   // Conclusions
   saveConclusion(workspaceId: string, conclusion: Conclusion): void {
     this.run(
-      `INSERT OR REPLACE INTO conclusions (id, peer_id, workspace_id, type, content, premises, confidence, created_at, source_session_id, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [conclusion.id, conclusion.peerId, workspaceId, conclusion.type, conclusion.content, JSON.stringify(conclusion.premises), conclusion.confidence, conclusion.createdAt, conclusion.sourceSessionId, conclusion.embedding ? JSON.stringify(conclusion.embedding) : null]
+      `INSERT OR REPLACE INTO conclusions (id, peer_id, workspace_id, type, content, premises, confidence, created_at, source_session_id, embedding, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [conclusion.id, conclusion.peerId, workspaceId, conclusion.type, conclusion.content, JSON.stringify(conclusion.premises), conclusion.confidence, conclusion.createdAt, conclusion.sourceSessionId, conclusion.embedding ? JSON.stringify(conclusion.embedding) : null, conclusion.scope || 'project']
     );
   }
 
-  getConclusions(workspaceId: string, peerId: string, limit: number = 10): Conclusion[] {
-    const rows = this.getAll("SELECT * FROM conclusions WHERE peer_id = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT ?", [peerId, workspaceId, limit]);
+  getConclusions(workspaceId: string, peerId: string, limit: number = 10, scope?: Scope): Conclusion[] {
+    let sql = "SELECT * FROM conclusions WHERE peer_id = ? AND workspace_id = ?";
+    const params: any[] = [peerId, workspaceId];
+    
+    if (scope) {
+      sql += " AND scope = ?";
+      params.push(scope);
+    }
+    
+    sql += " ORDER BY created_at DESC LIMIT ?";
+    params.push(limit);
+    
+    const rows = this.getAll(sql, params);
     return rows.map((r) => ({ 
       id: r.id, 
       peerId: r.peer_id, 
@@ -499,15 +528,26 @@ export class SQLiteStore {
       confidence: r.confidence, 
       createdAt: r.created_at, 
       sourceSessionId: r.source_session_id, 
-      embedding: r.embedding ? JSON.parse(r.embedding) : undefined 
+      embedding: r.embedding ? JSON.parse(r.embedding) : undefined,
+      scope: (r.scope as Scope) || 'project'
     }));
   }
 
-  getAllConclusions(workspaceId: string, peerId?: string): Conclusion[] {
+  getAllConclusions(workspaceId: string, peerId?: string, scope?: Scope): Conclusion[] {
     if (peerId) {
-      return this.getConclusions(workspaceId, peerId, 10000);
+      return this.getConclusions(workspaceId, peerId, 10000, scope);
     }
-    const rows = this.getAll("SELECT * FROM conclusions WHERE workspace_id = ? ORDER BY created_at DESC", [workspaceId]);
+    let sql = "SELECT * FROM conclusions WHERE workspace_id = ?";
+    const params: any[] = [workspaceId];
+    
+    if (scope) {
+      sql += " AND scope = ?";
+      params.push(scope);
+    }
+    
+    sql += " ORDER BY created_at DESC";
+    
+    const rows = this.getAll(sql, params);
     return rows.map((r) => ({ 
       id: r.id, 
       peerId: r.peer_id, 
@@ -517,8 +557,19 @@ export class SQLiteStore {
       confidence: r.confidence, 
       createdAt: r.created_at, 
       sourceSessionId: r.source_session_id, 
-      embedding: r.embedding ? JSON.parse(r.embedding) : undefined 
+      embedding: r.embedding ? JSON.parse(r.embedding) : undefined,
+      scope: (r.scope as Scope) || 'project'
     }));
+  }
+
+  // Get conclusions from the global workspace (user scope)
+  getGlobalConclusions(peerId: string, limit: number = 100): Conclusion[] {
+    return this.getConclusions(GLOBAL_WORKSPACE_ID, peerId, limit, 'user');
+  }
+
+  // Get all global (user scope) conclusions for a peer
+  getAllGlobalConclusions(peerId: string): Conclusion[] {
+    return this.getAllConclusions(GLOBAL_WORKSPACE_ID, peerId, 'user');
   }
 
   // Summaries
@@ -634,13 +685,35 @@ export class SQLiteStore {
   }
 
   // Representation
-  getRepresentation(workspaceId: string, peerId: string): PeerRepresentation | null {
+  getRepresentation(workspaceId: string, peerId: string, includeGlobal: boolean = true): PeerRepresentation | null {
     const conclusions = this.getConclusions(workspaceId, peerId, 100);
     const summaries = this.getSummaries(workspaceId, peerId, 10);
     const peerCard = this.getPeerCard(workspaceId, peerId);
     const observations = this.getObservations(workspaceId, peerId, 50);
     const lastConclusion = conclusions[0];
     return { peerId, conclusions, summaries, peerCard, observations, lastReasonedAt: lastConclusion?.createdAt || 0 };
+  }
+
+  // Get blended representation: local project + global user-scope
+  getBlendedRepresentation(workspaceId: string, peerId: string): {
+    local: PeerRepresentation | null;
+    global: PeerRepresentation | null;
+    blendedConclusions: Conclusion[];
+  } {
+    const local = this.getRepresentation(workspaceId, peerId, false);
+    const global = this.getRepresentation(GLOBAL_WORKSPACE_ID, peerId, false);
+    
+    // Blend conclusions: project conclusions first, then global
+    const blendedConclusions = [
+      ...(local?.conclusions || []),
+      ...(global?.conclusions || [])
+    ];
+    
+    return {
+      local,
+      global,
+      blendedConclusions
+    };
   }
 
   // Search
@@ -743,6 +816,18 @@ export class SQLiteStore {
     let ws = this.getWorkspace(id);
     if (!ws) { ws = { id, name, createdAt: Date.now(), config: { reasoningEnabled: true, tokenBatchSize: 1000 } }; this.saveWorkspace(ws); }
     return ws;
+  }
+
+  // Ensure global workspace exists (called on init)
+  ensureGlobalWorkspace(): Workspace {
+    return this.getOrCreateWorkspace(GLOBAL_WORKSPACE_ID, "Global (Cross-Project)");
+  }
+
+  // Ensure global peer exists for a user
+  ensureGlobalPeer(peerId: string, name: string): Peer {
+    // First ensure the global workspace exists
+    this.ensureGlobalWorkspace();
+    return this.getOrCreatePeer(GLOBAL_WORKSPACE_ID, peerId, name, "user");
   }
 
   getOrCreatePeer(workspaceId: string, id: string, name: string, type: Peer["type"] = "user"): Peer {

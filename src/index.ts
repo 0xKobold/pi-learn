@@ -63,20 +63,26 @@ export default async (pi: ExtensionAPI): Promise<void> => {
 
   const contextAssembler = createContextAssembler(store);
 
-  // Ensure default workspace exists
+  // Ensure default workspace and peers exist
   store.getOrCreateWorkspace(config.workspaceId, "Default Workspace");
   store.getOrCreatePeer(config.workspaceId, "user", "User", "user");
   store.getOrCreatePeer(config.workspaceId, "agent", "Agent", "agent");
 
+  // Ensure global workspace and peer for cross-project memory
+  store.ensureGlobalWorkspace();
+  store.ensureGlobalPeer("user", "User");
+  store.ensureGlobalPeer("agent", "Agent");
+
   // Run dream function
-  const runDream = async (): Promise<void> => {
+  const runDream = async (scope: "user" | "project" = "project"): Promise<void> => {
     if (!config.dream.enabled) return;
+    const workspaceId = scope === "user" ? "__global__" : config.workspaceId;
     const messages = store.getRecentMessages(config.workspaceId, "user", config.dream.batchSize);
     if (messages.length < config.dream.minMessagesSinceLastDream) return;
     const conclusions = store.getConclusions(config.workspaceId, "user", 100);
     const result = await reasoningEngine.dream(messages.map((m: any) => ({ role: m.role, content: m.content })), conclusions);
     for (const c of result.newConclusions) {
-      store.saveConclusion(config.workspaceId, {
+      store.saveConclusion(workspaceId, {
         id: crypto.randomUUID(),
         peerId: "user",
         type: c.type,
@@ -85,10 +91,11 @@ export default async (pi: ExtensionAPI): Promise<void> => {
         confidence: c.confidence,
         createdAt: Date.now(),
         sourceSessionId: messages[0]?.session_id || "dream",
+        scope,
       });
     }
     // Track dream metadata
-    store.updateDreamMetadata(config.workspaceId, messages.length, result.newConclusions.length);
+    store.updateDreamMetadata(workspaceId, messages.length, result.newConclusions.length);
   };
 
   // UI notification helper - captures ctx.ui when available

@@ -4,6 +4,12 @@
  * Common types and utilities for the pi-learn memory system.
  * Uses Ollama for embeddings and reasoning.
  */
+/**
+ * Scope classification for conclusions and other data
+ * - 'user': Cross-project data (traits, interests, goals) - stored in __global__
+ * - 'project': Project-specific data - stored in project workspace
+ */
+export type Scope = "user" | "project";
 export interface Peer {
     id: string;
     name: string;
@@ -21,6 +27,7 @@ export interface Conclusion {
     createdAt: number;
     sourceSessionId: string;
     embedding?: number[];
+    scope: Scope;
 }
 export interface Summary {
     id: string;
@@ -154,6 +161,10 @@ export declare const SHORT_SUMMARY_INTERVAL = 20;
 export declare const LONG_SUMMARY_INTERVAL = 60;
 export declare const DEFAULT_EMBEDDING_MODEL = "nomic-embed-text-v2-moe:latest";
 export declare const DEFAULT_REASONING_MODEL = "qwen3.5:latest";
+/**
+ * Global workspace ID for cross-project (user-scope) data
+ */
+export declare const GLOBAL_WORKSPACE_ID = "__global__";
 export interface EmbeddingResult {
     embedding: number[];
     model: string;

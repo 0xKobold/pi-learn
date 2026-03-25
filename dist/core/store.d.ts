@@ -2,7 +2,7 @@
  * SQLite Store Module - Database operations for pi-learn
  * Uses sql.js (WebAssembly SQLite) for cross-runtime compatibility
  */
-import type { Workspace, Peer, Session, Conclusion, Summary, PeerCard, Observation, PeerRepresentation, ExportData } from "../shared.js";
+import type { Workspace, Peer, Session, Conclusion, Summary, PeerCard, Observation, PeerRepresentation, ExportData, Scope } from "../shared.js";
 export declare function createStore(dbPath: string): Promise<SQLiteStore>;
 export declare class SQLiteStore {
     private db;
@@ -61,8 +61,10 @@ export declare class SQLiteStore {
     getMessages(workspaceId: string, sessionId: string, limit?: number): any[];
     getRecentMessages(workspaceId: string, peerId: string, limit?: number): any[];
     saveConclusion(workspaceId: string, conclusion: Conclusion): void;
-    getConclusions(workspaceId: string, peerId: string, limit?: number): Conclusion[];
-    getAllConclusions(workspaceId: string, peerId?: string): Conclusion[];
+    getConclusions(workspaceId: string, peerId: string, limit?: number, scope?: Scope): Conclusion[];
+    getAllConclusions(workspaceId: string, peerId?: string, scope?: Scope): Conclusion[];
+    getGlobalConclusions(peerId: string, limit?: number): Conclusion[];
+    getAllGlobalConclusions(peerId: string): Conclusion[];
     saveSummary(workspaceId: string, summary: Summary): void;
     getSummaries(workspaceId: string, peerId: string, limit?: number): Summary[];
     getPeerCard(workspaceId: string, peerId: string): PeerCard | null;
@@ -80,7 +82,12 @@ export declare class SQLiteStore {
     searchObservationsByEmbedding(workspaceId: string, peerId: string, queryEmbedding: number[], limit?: number): Array<Observation & {
         relevance: number;
     }>;
-    getRepresentation(workspaceId: string, peerId: string): PeerRepresentation | null;
+    getRepresentation(workspaceId: string, peerId: string, includeGlobal?: boolean): PeerRepresentation | null;
+    getBlendedRepresentation(workspaceId: string, peerId: string): {
+        local: PeerRepresentation | null;
+        global: PeerRepresentation | null;
+        blendedConclusions: Conclusion[];
+    };
     searchSessions(workspaceId: string, query: string, limit?: number): Array<{
         sessionId: string;
         createdAt: number;
@@ -100,6 +107,8 @@ export declare class SQLiteStore {
     };
     updateDreamMetadata(workspaceId: string, messageCount: number, conclusionCount: number): void;
     getOrCreateWorkspace(id: string, name?: string): Workspace;
+    ensureGlobalWorkspace(): Workspace;
+    ensureGlobalPeer(peerId: string, name: string): Peer;
     getOrCreatePeer(workspaceId: string, id: string, name: string, type?: Peer["type"]): Peer;
     getOrCreateSession(workspaceId: string, id: string, peerIds?: string[]): Session;
     close(): void;

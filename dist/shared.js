@@ -26,6 +26,10 @@ export const LONG_SUMMARY_INTERVAL = 60;
 export const DEFAULT_EMBEDDING_MODEL = "nomic-embed-text-v2-moe:latest";
 export const DEFAULT_REASONING_MODEL = "qwen3.5:latest";
 /**
+ * Global workspace ID for cross-project (user-scope) data
+ */
+export const GLOBAL_WORKSPACE_ID = "__global__";
+/**
  * Generate embeddings using Ollama's embedding endpoint
  */
 export async function generateEmbedding(text, baseUrl = "http://localhost:11434", model = DEFAULT_EMBEDDING_MODEL) {
