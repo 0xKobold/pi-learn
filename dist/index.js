@@ -94,8 +94,10 @@ export default async (pi) => {
         }
         // Track dream metadata
         store.updateDreamMetadata(workspaceId, messages.length, result.newConclusions.length);
-        // Log scope distribution for debugging
-        console.log(`[pi-learn] Dream complete: ${userScopeCount} user-scope, ${projectScopeCount} project-scope conclusions`);
+        // Notify about dream completion with scope distribution
+        if (result.newConclusions.length > 0) {
+            notify(`Dream complete: ${userScopeCount} user-scope, ${projectScopeCount} project-scope conclusions`, "info");
+        }
     };
     // UI notification helper - captures ctx.ui when available
     const notify = (message, type = "info") => {
