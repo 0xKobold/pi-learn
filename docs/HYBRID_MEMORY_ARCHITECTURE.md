@@ -110,10 +110,11 @@ interface ReasoningOutput {
 - [x] Dream saves conclusions to appropriate workspace based on model-assigned scope
 - [x] Logging for scope distribution debugging
 
-#### Phase 4: Testing (In Progress)
-- [ ] Unit tests for scope filtering
+#### Phase 4: Testing ✅ (Complete - Database Recovered)
+- [x] Database recovery (1272 conclusions recovered from corruption)
+- [x] Test helper tools: `learn_test_hybrid`, `learn_count_by_scope`
+- [ ] Verify new conclusions get proper scope assigned
 - [ ] Integration tests for context blending
-- [ ] Verify no breaking changes to existing behavior
 
 ### Backward Compatibility
 
