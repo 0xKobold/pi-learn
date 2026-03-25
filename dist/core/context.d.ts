@@ -33,6 +33,7 @@ export interface BlendedContext {
             processed: boolean;
         }>;
     };
+    blendedConclusions: Conclusion[];
     assembledString: string;
 }
 export declare class ContextAssembler {

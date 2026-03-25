@@ -412,12 +412,9 @@ export function buildDreamPrompt(
 // ============================================================================
 
 export interface ReasoningOutput {
-  explicit: Array<{ content: string }>;
-  deductive: Array<{ premises: string[]; conclusion: string }>;
-  inductive?: Array<{ pattern: string; evidence: string[] }>;
-  abductive?: Array<{ observation: string; inference: string; simplest: boolean }>;
-  peerCard?: Partial<PeerCard>;
-  summary?: { type: "short" | "long"; content: string };
+  explicit: Array<{ content: string; scope?: Scope }>;
+  deductive: Array<{ premises: string[]; conclusion: string; scope?: Scope }>;
+  conclusions?: Array<{ content: string; type: string; premises: string[]; scope: Scope; confidence: number }>;
 }
 
 export interface DreamOutput {
@@ -426,10 +423,9 @@ export interface DreamOutput {
     content: string;
     premises: string[];
     confidence: number;
+    scope: Scope;
   }>;
   updatedPatterns?: Array<{ pattern: string; evidence: string[] }>;
-  peerCardUpdates?: Partial<PeerCard>;
-  dreamNarrative?: string;
 }
 
 /**

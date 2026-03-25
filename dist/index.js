@@ -47,7 +47,7 @@ export default async (pi) => {
     store.ensureGlobalWorkspace();
     store.ensureGlobalPeer("user", "User");
     store.ensureGlobalPeer("agent", "Agent");
-    // Run dream function
+    // Run dream function - with scope-aware reasoning
     const runDream = async (scope = "project") => {
         if (!config.dream.enabled)
             return;
@@ -55,10 +55,26 @@ export default async (pi) => {
         const messages = store.getRecentMessages(config.workspaceId, "user", config.dream.batchSize);
         if (messages.length < config.dream.minMessagesSinceLastDream)
             return;
-        const conclusions = store.getConclusions(config.workspaceId, "user", 100);
-        const result = await reasoningEngine.dream(messages.map((m) => ({ role: m.role, content: m.content })), conclusions);
+        // Get context for informed reasoning (blended global + local)
+        const blended = contextAssembler.getBlendedContext(config.workspaceId, "user");
+        const reasoningContext = {
+            globalConclusions: blended.global.conclusions,
+            localConclusions: blended.project.conclusions,
+            globalPeerCard: blended.global.peerCard || undefined,
+        };
+        // Run dream with context and let the model decide scope
+        const result = await reasoningEngine.dream(messages.map((m) => ({ role: m.role, content: m.content })), blended.blendedConclusions, reasoningContext);
+        // Save conclusions with the scope the model assigned
+        let userScopeCount = 0;
+        let projectScopeCount = 0;
         for (const c of result.newConclusions) {
-            store.saveConclusion(workspaceId, {
+            // Use the scope assigned by the reasoning model
+            const conclusionScope = c.scope || scope;
+            // Determine which workspace to save to based on scope
+            const conclusionWorkspaceId = conclusionScope === "user"
+                ? "__global__"
+                : config.workspaceId;
+            store.saveConclusion(conclusionWorkspaceId, {
                 id: crypto.randomUUID(),
                 peerId: "user",
                 type: c.type,
@@ -67,11 +83,19 @@ export default async (pi) => {
                 confidence: c.confidence,
                 createdAt: Date.now(),
                 sourceSessionId: messages[0]?.session_id || "dream",
-                scope,
+                scope: conclusionScope,
             });
+            if (conclusionScope === "user") {
+                userScopeCount++;
+            }
+            else {
+                projectScopeCount++;
+            }
         }
         // Track dream metadata
         store.updateDreamMetadata(workspaceId, messages.length, result.newConclusions.length);
+        // Log scope distribution for debugging
+        console.log(`[pi-learn] Dream complete: ${userScopeCount} user-scope, ${projectScopeCount} project-scope conclusions`);
     };
     // UI notification helper - captures ctx.ui when available
     const notify = (message, type = "info") => {

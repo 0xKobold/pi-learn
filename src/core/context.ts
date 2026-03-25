@@ -37,6 +37,7 @@ export interface BlendedContext {
     summaries: Summary[];
     observations: Array<{ role: string; content: string; processed: boolean }>;
   };
+  blendedConclusions: Conclusion[];
   assembledString: string;
 }
 
@@ -68,6 +69,12 @@ export class ContextAssembler {
       localRep
     );
     
+    // Combine conclusions: project first, then global
+    const blendedConclusions = [
+      ...(localRep?.conclusions || []),
+      ...(globalRep?.conclusions || [])
+    ];
+    
     return {
       global: {
         peerCard: globalRep?.peerCard || null,
@@ -82,6 +89,7 @@ export class ContextAssembler {
           .slice(0, 5)
           .map(o => ({ role: o.role, content: o.content, processed: o.processed })),
       },
+      blendedConclusions,
       assembledString,
     };
   }

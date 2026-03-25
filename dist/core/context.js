@@ -32,6 +32,11 @@ export class ContextAssembler {
         const globalRep = this.store.getRepresentation(GLOBAL_WORKSPACE_ID, peerId, false);
         // Blend the context strings
         const assembledString = this.buildBlendedContextString(globalRep, localRep);
+        // Combine conclusions: project first, then global
+        const blendedConclusions = [
+            ...(localRep?.conclusions || []),
+            ...(globalRep?.conclusions || [])
+        ];
         return {
             global: {
                 peerCard: globalRep?.peerCard || null,
@@ -46,6 +51,7 @@ export class ContextAssembler {
                     .slice(0, 5)
                     .map(o => ({ role: o.role, content: o.content, processed: o.processed })),
             },
+            blendedConclusions,
             assembledString,
         };
     }
@@ -340,17 +346,34 @@ export class ContextAssembler {
             parts.push("\n## Project Summaries");
             localRep.summaries.slice(0, 2).forEach((s) => parts.push(`- ${s.type}: ${s.content.slice(0, 150)}`));
         }
-        // Project-specific peer card (overrides)
+        // Project-specific peer card (always show if exists, since no global)
         if (localRep?.peerCard) {
             const card = localRep.peerCard;
-            // Only show if it has unique info beyond global
-            const hasUniqueInfo = card.occupation || card.interests.length || card.traits.length;
-            if (hasUniqueInfo) {
-                parts.push("\n## Project-Specific Profile");
+            // Show the full profile if no global card OR if this is the only card
+            const showFullProfile = !globalRep?.peerCard;
+            if (showFullProfile) {
+                parts.push("\n## User Profile");
+                if (card.name)
+                    parts.push(`- Name: ${card.name}`);
                 if (card.occupation)
                     parts.push(`- Occupation: ${card.occupation}`);
                 if (card.interests.length)
                     parts.push(`- Interests: ${card.interests.join(", ")}`);
+                if (card.traits.length)
+                    parts.push(`- Traits: ${card.traits.join(", ")}`);
+                if (card.goals.length)
+                    parts.push(`- Goals: ${card.goals.join(", ")}`);
+            }
+            else {
+                // Only show unique info beyond global
+                const hasUniqueInfo = card.occupation || card.interests.length || card.traits.length;
+                if (hasUniqueInfo) {
+                    parts.push("\n## Project-Specific Profile");
+                    if (card.occupation)
+                        parts.push(`- Occupation: ${card.occupation}`);
+                    if (card.interests.length)
+                        parts.push(`- Interests: ${card.interests.join(", ")}`);
+                }
             }
         }
         return parts.join("\n") || "No memory context available.";

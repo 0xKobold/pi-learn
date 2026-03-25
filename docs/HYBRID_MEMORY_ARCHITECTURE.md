@@ -102,13 +102,15 @@ interface ReasoningOutput {
 - [x] `getMemoryStats()` includes both local and global counts
 - [x] New tools: `learn_get_global_context`, `learn_get_project_context`
 
-#### Phase 3: Reasoning (Next)
-- [ ] Update reasoning prompts to output scope
-- [ ] Parse scope from reasoning output
-- [ ] Save conclusions to appropriate scope
-- [ ] Update dream to use blended context
+#### Phase 3: Reasoning ✅ (Complete)
+- [x] Update reasoning prompts to output scope (SCOPE: user|project)
+- [x] Parse scope from reasoning output
+- [x] `ReasoningContext` interface for informed reasoning
+- [x] `blendedConclusions` field in BlendedContext
+- [x] Dream saves conclusions to appropriate workspace based on model-assigned scope
+- [x] Logging for scope distribution debugging
 
-#### Phase 4: Testing
+#### Phase 4: Testing (In Progress)
 - [ ] Unit tests for scope filtering
 - [ ] Integration tests for context blending
 - [ ] Verify no breaking changes to existing behavior

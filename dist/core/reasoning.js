@@ -1,5 +1,9 @@
 /**
  * Reasoning Engine Module - LLM-based reasoning for pi-learn
+ *
+ * Supports hybrid scope:
+ * - 'user' scope: Cross-project insights (traits, interests, goals)
+ * - 'project' scope: Project-specific insights (code patterns, decisions)
  */
 export const DEFAULT_RETRY_CONFIG = {
     maxRetries: 3,
@@ -42,13 +46,25 @@ export class ReasoningEngine {
         const response = await this.callOllama("/api/embeddings", { model: this.config.embeddingModel, prompt: text });
         return response.embedding;
     }
-    async reason(messages, _peerId) {
-        const prompt = this.buildReasoningPrompt(messages);
+    /**
+     * Reason about messages with optional context
+     * @param messages Messages to reason about
+     * @param _peerId Peer ID (unused, context determines scope)
+     * @param context Optional context for informed reasoning
+     */
+    async reason(messages, _peerId, context) {
+        const prompt = this.buildReasoningPrompt(messages, context);
         const content = await this.callOllamaChat(prompt);
         return this.parseReasoningOutput(content);
     }
-    async dream(messages, existingConclusions) {
-        const prompt = this.buildDreamPrompt(messages, existingConclusions);
+    /**
+     * Dream - consolidate memories with scope classification
+     * @param messages Recent messages
+     * @param existingConclusions Existing conclusions (can be mixed scope)
+     * @param context Optional context for informed dreaming
+     */
+    async dream(messages, existingConclusions, context) {
+        const prompt = this.buildDreamPrompt(messages, existingConclusions, context);
         const content = await this.callOllamaChat(prompt);
         return this.parseDreamOutput(content);
     }
@@ -120,66 +136,224 @@ export class ReasoningEngine {
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
-    buildReasoningPrompt(messages) {
+    /**
+     * Build reasoning prompt with scope classification guidance
+     */
+    buildReasoningPrompt(messages, context) {
         const formatted = messages.map((m) => `[${m.role}] ${m.content}`).join("\n\n");
-        return `You are analyzing conversation messages to extract key conclusions about the user.\n\nMessages:\n${formatted}\n\nBased on these messages, extract 1-3 key conclusions about the user. Format your response as:\n\nCONCLUSION: <type>\nType: deductive, inductive, or abductive\nContent: <what you concluded>\nPremises: <what led to this conclusion>\nConfidence: <0.0-1.0>\n\nConclusion types:\n- deductive: Logical certainty\n- inductive: Probable inference\n- abductive: Best explanation`;
+        // Build context string
+        let contextStr = "";
+        if (context) {
+            if (context.globalPeerCard) {
+                const card = context.globalPeerCard;
+                contextStr += "\n\n## Known User Profile (Global)\n";
+                if (card.name)
+                    contextStr += `- Name: ${card.name}\n`;
+                if (card.occupation)
+                    contextStr += `- Occupation: ${card.occupation}\n`;
+                if (card.interests.length)
+                    contextStr += `- Interests: ${card.interests.join(", ")}\n`;
+                if (card.traits.length)
+                    contextStr += `- Traits: ${card.traits.join(", ")}\n`;
+                if (card.goals.length)
+                    contextStr += `- Goals: ${card.goals.join(", ")}\n`;
+            }
+            if (context.globalConclusions?.length) {
+                contextStr += "\n\n## Cross-Project Insights\n";
+                context.globalConclusions.slice(0, 5).forEach((c) => {
+                    contextStr += `- [${c.type}] ${c.content}\n`;
+                });
+            }
+        }
+        return `You are analyzing conversation messages to extract key conclusions about the user.
+
+Messages to analyze:
+${formatted}
+${contextStr}
+
+For each conclusion, classify its SCOPE:
+- "user": Cross-project insights about the peer's traits, interests, goals, preferences, or personality. These apply across ALL projects.
+  Examples: "Perfectionist", "Prefers TypeScript over JavaScript", "Interested in AI", "Values code quality"
+  
+- "project": Project-specific insights about code, architecture, or decisions unique to THIS project.
+  Examples: "Used SQLite for local storage", "Implemented React hooks for state", "Chose this API design"
+
+Format each conclusion as:
+SCOPE: <user|project>
+CONCLUSION: <type>
+Type: deductive, inductive, or abductive
+Content: <what you concluded>
+Premises: <what led to this conclusion>
+Confidence: <0.0-1.0>
+
+RULES:
+- If in doubt, prefer "project" scope (keeps user profile focused)
+- "user" scope: personality, preferences, stated interests, goals
+- "project" scope: technical decisions, code patterns, implementation details
+
+Conclusion types:
+- deductive: Logical certainty
+- inductive: Probable inference
+- abductive: Best explanation
+
+Respond with 1-5 conclusions, focusing on the most important insights.`;
     }
+    /**
+     * Parse reasoning output with scope classification
+     */
     parseReasoningOutput(text) {
-        const explicit = [];
-        const deductive = [];
-        const blocks = text.split(/CONCLUSION:/).filter(Boolean);
+        const conclusions = [];
+        // Match blocks that start with SCOPE and CONCLUSION
+        const blocks = text.split(/(?=SCOPE:)/i).filter(Boolean);
         for (const block of blocks) {
-            const typeMatch = block.match(/Type:\s*(\w+)/);
-            const contentMatch = block.match(/Content:\s*(.+?)(?=Premises:|$)/s);
-            const premisesMatch = block.match(/Premises:\s*(.+?)(?=Confidence:|$)/s);
-            const type = typeMatch?.[1];
-            if (contentMatch) {
+            const scopeMatch = block.match(/SCOPE:\s*(\w+)/i);
+            const typeMatch = block.match(/Type:\s*(\w+)/i);
+            const contentMatch = block.match(/Content:\s*(.+?)(?=Premises:|Confidence:|$)/s);
+            const premisesMatch = block.match(/Premises:\s*(.+?)(?=Confidence:|Type:|SCOPE:|$)/s);
+            const confidenceMatch = block.match(/Confidence:\s*([\d.]+)/);
+            if (scopeMatch && contentMatch) {
+                const scope = scopeMatch[1].toLowerCase() || 'project';
+                const type = typeMatch?.[1] || 'inductive';
                 const content = contentMatch[1].trim();
-                explicit.push({ content });
-                if (type === "deductive" && premisesMatch) {
-                    deductive.push({ premises: premisesMatch[1].split(",").map((p) => p.trim()), conclusion: content });
+                const confidence = confidenceMatch ? parseFloat(confidenceMatch[1]) : 0.5;
+                let premises = [];
+                if (premisesMatch) {
+                    premises = premisesMatch[1].split(/[,;]/).map((p) => p.trim()).filter(Boolean);
+                }
+                conclusions.push({ content, type, premises, scope, confidence });
+            }
+        }
+        // Fallback: if no scoped conclusions found, try original parsing with default scope
+        if (conclusions.length === 0) {
+            const legacyBlocks = text.split(/CONCLUSION:/i).filter(Boolean);
+            for (const block of legacyBlocks) {
+                const typeMatch = block.match(/Type:\s*(\w+)/i);
+                const contentMatch = block.match(/Content:\s*(.+?)(?=Premises:|$)/s);
+                if (contentMatch) {
+                    conclusions.push({
+                        content: contentMatch[1].trim(),
+                        type: typeMatch?.[1] || 'inductive',
+                        premises: [],
+                        scope: 'project', // Default to project scope
+                        confidence: 0.5,
+                    });
                 }
             }
         }
-        return { explicit, deductive };
+        // Convert to ReasoningOutput format
+        const explicit = conclusions.map((c) => ({ content: c.content, scope: c.scope }));
+        const deductive = conclusions
+            .filter((c) => c.type === "deductive")
+            .map((c) => ({ premises: c.premises, conclusion: c.content, scope: c.scope }));
+        return { explicit, deductive, conclusions };
     }
-    buildDreamPrompt(messages, existingConclusions) {
+    /**
+     * Build dream prompt with scope classification
+     */
+    buildDreamPrompt(messages, existingConclusions, context) {
         const recent = messages.slice(-50).map((m) => `[${m.role}] ${m.content}`).join("\n");
-        const prior = existingConclusions.slice(-10).map((c) => `- [${c.type}] ${c.content}`).join("\n");
-        return `You are dreaming - consolidating memories.
+        // Separate conclusions by scope
+        const userConclusions = existingConclusions.filter((c) => c.scope === 'user');
+        const projectConclusions = existingConclusions.filter((c) => c.scope === 'project');
+        let contextStr = "";
+        if (context?.globalPeerCard) {
+            const card = context.globalPeerCard;
+            contextStr += "\n\n## Known User Profile\n";
+            if (card.name)
+                contextStr += `- Name: ${card.name}\n`;
+            if (card.interests.length)
+                contextStr += `- Interests: ${card.interests.join(", ")}\n`;
+            if (card.traits.length)
+                contextStr += `- Traits: ${card.traits.join(", ")}\n`;
+            if (card.goals.length)
+                contextStr += `- Goals: ${card.goals.join(", ")}\n`;
+        }
+        return `You are dreaming - consolidating memories and generating new insights.
 
 Recent messages:
 ${recent}
+${contextStr}
 
-Prior conclusions:
-${prior || "None"}
+Prior conclusions by scope:
+## Cross-Project (user scope):
+${userConclusions.slice(0, 10).map((c) => `- [${c.type}] ${c.content}`).join("\n") || "None"}
+
+## Project-Specific (project scope):
+${projectConclusions.slice(0, 10).map((c) => `- [${c.type}] ${c.content}`).join("\n") || "None"}
+
+Generate NEW conclusions by analyzing patterns in the messages.
+Classify each as SCOPE: user (cross-project) or project (local).
 
 Respond with:
 NEW_CONCLUSIONS:
-- inductive: <observation about user patterns>
-- abductive: <inference about user goals>
-- deductive: <certain fact about user>
+- SCOPE: user
+  Type: inductive
+  Content: <insight about user traits/interests/goals>
+- SCOPE: project  
+  Type: abductive
+  Content: <insight about this project's direction>
 
-IMPORTANT: Use ONLY these types: inductive, abductive, deductive (no underscores, no custom names)
+IMPORTANT: Use ONLY these types: inductive, abductive, deductive
+Use EXACT scope values: "user" or "project"
 
-UPDATED_CONCLUSIONS:
-- <original conclusion>: <updated understanding if needed, or "unchanged">`;
+UPDATED_PATTERNS:
+- <existing pattern>: <updated understanding if needed, or "unchanged">`;
     }
+    /**
+     * Parse dream output with scope classification
+     */
     parseDreamOutput(text) {
         const newConclusions = [];
         const updatedPatterns = [];
-        const newMatch = text.match(/NEW_CONCLUSIONS:(.+?)(?=UPDATED_CONCLUSIONS:|$)/s);
+        // Parse new conclusions
+        const newMatch = text.match(/NEW_CONCLUSIONS:(.+?)(?=UPDATED_PATTERNS:|$)/si);
         if (newMatch) {
-            const lines = newMatch[1].split("\n").filter((l) => l.trim().startsWith("-"));
-            for (const line of lines) {
-                // Match format: - type: content  or  - type (no content yet)
-                const match = line.match(/-\s*(deductive|inductive|abductive)[\s:]+(.+)?/i);
-                if (match) {
-                    const type = match[1].toLowerCase();
-                    const content = match[2]?.trim() || "";
-                    if (content) {
-                        newConclusions.push({ type, content, premises: [], confidence: 0.6 });
+            // Split by SCOPE: to get individual conclusions
+            const conclusionBlocks = newMatch[1].split(/(?=^\s*SCOPE:)/m).filter(Boolean);
+            for (const block of conclusionBlocks) {
+                const scopeMatch = block.match(/SCOPE:\s*(\w+)/i);
+                const typeMatch = block.match(/Type:\s*(\w+)/i);
+                const contentMatch = block.match(/Content:\s*(.+?)(?=$)/s);
+                if (scopeMatch && contentMatch) {
+                    const scope = scopeMatch[1].toLowerCase() || 'project';
+                    const type = typeMatch?.[1]?.toLowerCase() || 'inductive';
+                    const content = contentMatch[1].trim();
+                    if (content && content.length > 5) {
+                        newConclusions.push({
+                            type,
+                            content,
+                            premises: [],
+                            confidence: 0.6,
+                            scope,
+                        });
                     }
+                }
+            }
+        }
+        // Fallback: try simpler format
+        if (newConclusions.length === 0) {
+            const lines = text.split("\n").filter((l) => l.trim().startsWith("-"));
+            for (const line of lines) {
+                const match = line.match(/-\s*(deductive|inductive|abductive)[\s:]+(.+)/i);
+                if (match) {
+                    newConclusions.push({
+                        type: match[1].toLowerCase(),
+                        content: match[2].trim(),
+                        premises: [],
+                        confidence: 0.6,
+                        scope: 'project', // Default to project scope
+                    });
+                }
+            }
+        }
+        // Parse updated patterns
+        const updatedMatch = text.match(/UPDATED_PATTERNS:(.+?)$/si);
+        if (updatedMatch) {
+            const lines = updatedMatch[1].split("\n").filter((l) => l.includes(":"));
+            for (const line of lines) {
+                const [pattern, evidence] = line.split(":").map((s) => s.trim());
+                if (pattern && evidence && evidence !== "unchanged") {
+                    updatedPatterns.push({ pattern, evidence: [evidence] });
                 }
             }
         }
