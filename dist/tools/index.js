@@ -186,6 +186,21 @@ export const TOOLS = {
             targetPeerId: Type.String({ description: "The peer being observed" }),
         }),
     },
+    // === Test Helper Tools ===
+    learn_test_hybrid: {
+        label: "Test Hybrid Memory",
+        description: "Debug tool that outputs structured info about both global and project scopes. Useful for testing the hybrid architecture.",
+        params: Type.Object({
+            peerId: Type.Optional(Type.String({ description: "Peer ID (defaults to 'user')" })),
+        }),
+    },
+    learn_count_by_scope: {
+        label: "Count Conclusions By Scope",
+        description: "Show conclusion counts broken down by scope (user/project) for both global and project workspaces.",
+        params: Type.Object({
+            peerId: Type.Optional(Type.String({ description: "Peer ID (defaults to 'user')" })),
+        }),
+    },
 };
 // Create tool executors with proper typing
 export function createToolExecutors(deps) {
@@ -562,6 +577,147 @@ export function createToolExecutors(deps) {
                     return { content: [{ type: "text", text: `No perspective data found for ${params.observerPeerId} on ${params.targetPeerId}` }], details: { found: false } };
                 }
                 return { content: [{ type: "text", text: perspective }], details: { found: true, observerPeerId: params.observerPeerId, targetPeerId: params.targetPeerId } };
+            }),
+        },
+        // === Test Helper Tools ===
+        learn_test_hybrid: {
+            execute: (async (_, params, _signal, _onUpdate, _ctx) => {
+                const peerId = params.peerId || "user";
+                // Get blended context for full picture
+                const blended = contextAssembler.getBlendedContext(config.workspaceId, peerId);
+                // Get stats for both scopes
+                const globalConclusions = store.getGlobalConclusions(peerId, 100);
+                const projectConclusions = store.getConclusions(config.workspaceId, peerId, 100);
+                const globalCard = store.getPeerCard("__global__", peerId);
+                const projectCard = store.getPeerCard(config.workspaceId, peerId);
+                const lines = [
+                    "## Hybrid Memory Test",
+                    "",
+                    `**Workspace ID**: ${config.workspaceId}`,
+                    `**Global Workspace**: __global__`,
+                    "",
+                    "### Scope Summary",
+                    `| Scope | Conclusions | Has Peer Card |`,
+                    `|-------|-------------|---------------|`,
+                    `| Global (__global__) | ${globalConclusions.length} | ${globalCard ? "Yes" : "No"} |`,
+                    `| Project (${config.workspaceId}) | ${projectConclusions.length} | ${projectCard ? "Yes" : "No"} |`,
+                    "",
+                    "### Global Conclusions (user scope)",
+                ];
+                if (globalConclusions.length === 0) {
+                    lines.push("  _(none yet)_");
+                }
+                else {
+                    globalConclusions.slice(0, 5).forEach((c) => {
+                        lines.push(`  - [${c.type}] ${c.content.slice(0, 80)}${c.content.length > 80 ? "..." : ""}`);
+                    });
+                    if (globalConclusions.length > 5) {
+                        lines.push(`  _... and ${globalConclusions.length - 5} more_`);
+                    }
+                }
+                lines.push("", "### Project Conclusions (project scope)");
+                if (projectConclusions.length === 0) {
+                    lines.push("  _(none yet)_");
+                }
+                else {
+                    projectConclusions.slice(0, 5).forEach((c) => {
+                        lines.push(`  - [${c.type}] ${c.content.slice(0, 80)}${c.content.length > 80 ? "..." : ""}`);
+                    });
+                    if (projectConclusions.length > 5) {
+                        lines.push(`  _... and ${projectConclusions.length - 5} more_`);
+                    }
+                }
+                if (globalCard) {
+                    lines.push("", "### Global Peer Card");
+                    if (globalCard.name)
+                        lines.push(`  - Name: ${globalCard.name}`);
+                    if (globalCard.occupation)
+                        lines.push(`  - Occupation: ${globalCard.occupation}`);
+                    if (globalCard.interests.length)
+                        lines.push(`  - Interests: ${globalCard.interests.join(", ")}`);
+                    if (globalCard.traits.length)
+                        lines.push(`  - Traits: ${globalCard.traits.join(", ")}`);
+                }
+                if (projectCard) {
+                    lines.push("", "### Project Peer Card");
+                    if (projectCard.name)
+                        lines.push(`  - Name: ${projectCard.name}`);
+                    if (projectCard.occupation)
+                        lines.push(`  - Occupation: ${projectCard.occupation}`);
+                    if (projectCard.interests.length)
+                        lines.push(`  - Interests: ${projectCard.interests.join(", ")}`);
+                }
+                lines.push("", "### Blended Context Preview");
+                lines.push("```");
+                const preview = blended.assembledString.slice(0, 300);
+                lines.push(preview + (blended.assembledString.length > 300 ? "..." : ""));
+                lines.push("```");
+                return {
+                    content: [{ type: "text", text: lines.join("\n") }],
+                    details: {
+                        globalConclusionCount: globalConclusions.length,
+                        projectConclusionCount: projectConclusions.length,
+                        hasGlobalCard: !!globalCard,
+                        hasProjectCard: !!projectCard,
+                        blendedContext: blended,
+                    },
+                };
+            }),
+        },
+        learn_count_by_scope: {
+            execute: (async (_, params, _signal, _onUpdate, _ctx) => {
+                const peerId = params.peerId || "user";
+                // Count global conclusions by scope (should all be 'user' scope)
+                const globalConclusions = store.getGlobalConclusions(peerId, 1000);
+                // Count project conclusions by scope
+                const allProjectConclusions = store.getConclusions(config.workspaceId, peerId, 1000);
+                const projectByScope = {
+                    project: allProjectConclusions.filter((c) => c.scope === "project").length,
+                    user: allProjectConclusions.filter((c) => c.scope === "user").length,
+                };
+                // Breakdown by type within each scope
+                const globalByType = {
+                    deductive: globalConclusions.filter((c) => c.type === "deductive").length,
+                    inductive: globalConclusions.filter((c) => c.type === "inductive").length,
+                    abductive: globalConclusions.filter((c) => c.type === "abductive").length,
+                };
+                const projectByType = {
+                    deductive: allProjectConclusions.filter((c) => c.type === "deductive").length,
+                    inductive: allProjectConclusions.filter((c) => c.type === "inductive").length,
+                    abductive: allProjectConclusions.filter((c) => c.type === "abductive").length,
+                };
+                const lines = [
+                    "## Conclusion Counts by Scope",
+                    "",
+                    "```",
+                    "                    | Global (__global__) | Project",
+                    "--------------------|---------------------|-------",
+                    `Total conclusions   | ${String(globalConclusions.length).padEnd(19)} | ${allProjectConclusions.length}`,
+                    "                    |                     |",
+                    `  deductive        | ${String(globalByType.deductive).padEnd(19)} | ${projectByType.deductive}`,
+                    `  inductive        | ${String(globalByType.inductive).padEnd(19)} | ${projectByType.inductive}`,
+                    `  abductive        | ${String(globalByType.abductive).padEnd(19)} | ${projectByType.abductive}`,
+                    "                    |                     |",
+                    `Scope breakdown:    | All 'user'          | project: ${projectByScope.project}, user: ${projectByScope.user}`,
+                    "```",
+                    "",
+                    "**Note**: Global conclusions should all be 'user' scope. Project conclusions can be",
+                    "either 'project' scope (code decisions) or 'user' scope (traits learned in project).",
+                ];
+                return {
+                    content: [{ type: "text", text: lines.join("\n") }],
+                    details: {
+                        global: {
+                            total: globalConclusions.length,
+                            byType: globalByType,
+                        },
+                        project: {
+                            total: allProjectConclusions.length,
+                            byScope: projectByScope,
+                            byType: projectByType,
+                        },
+                    },
+                };
             }),
         },
     };

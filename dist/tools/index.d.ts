@@ -228,6 +228,20 @@ export declare const TOOLS: {
             targetPeerId: import("@sinclair/typebox").TString;
         }>;
     };
+    readonly learn_test_hybrid: {
+        readonly label: "Test Hybrid Memory";
+        readonly description: "Debug tool that outputs structured info about both global and project scopes. Useful for testing the hybrid architecture.";
+        readonly params: import("@sinclair/typebox").TObject<{
+            peerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>;
+    };
+    readonly learn_count_by_scope: {
+        readonly label: "Count Conclusions By Scope";
+        readonly description: "Show conclusion counts broken down by scope (user/project) for both global and project workspaces.";
+        readonly params: import("@sinclair/typebox").TObject<{
+            peerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>;
+    };
 };
 export declare function createToolExecutors(deps: {
     store: SQLiteStore;
@@ -319,6 +333,12 @@ export declare function createToolExecutors(deps: {
         execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
     };
     learn_get_perspective: {
+        execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
+    };
+    learn_test_hybrid: {
+        execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
+    };
+    learn_count_by_scope: {
         execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
     };
 };
