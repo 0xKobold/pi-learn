@@ -54,9 +54,25 @@ export declare const TOOLS: {
     };
     readonly learn_get_context: {
         readonly label: "Get Peer Context";
-        readonly description: "Retrieve the assembled context for a peer from memory.";
+        readonly description: "Retrieve the blended context for a peer (global user profile + project memories).";
         readonly params: import("@sinclair/typebox").TObject<{
             peerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>;
+    };
+    readonly learn_get_global_context: {
+        readonly label: "Get Global Context";
+        readonly description: "Retrieve cross-project context (user traits, interests, goals) shared across all projects.";
+        readonly params: import("@sinclair/typebox").TObject<{
+            peerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>;
+    };
+    readonly learn_get_project_context: {
+        readonly label: "Get Project Context";
+        readonly description: "Retrieve project-specific context (local to current workspace).";
+        readonly params: import("@sinclair/typebox").TObject<{
+            peerId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         }>;
     };
     readonly learn_query: {
@@ -77,7 +93,9 @@ export declare const TOOLS: {
     readonly learn_trigger_dream: {
         readonly label: "Trigger Dream";
         readonly description: "Manually trigger a dream cycle for deeper reasoning.";
-        readonly params: import("@sinclair/typebox").TObject<{}>;
+        readonly params: import("@sinclair/typebox").TObject<{
+            scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        }>;
     };
     readonly learn_prune: {
         readonly label: "Prune Old Data";
@@ -216,7 +234,7 @@ export declare function createToolExecutors(deps: {
     contextAssembler: ContextAssembler;
     reasoningEngine: ReasoningEngine;
     config: ToolsConfig;
-    runDream: () => Promise<void>;
+    runDream: (scope?: 'user' | 'project') => Promise<void>;
 }): {
     learn_add_message: {
         execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
@@ -228,6 +246,12 @@ export declare function createToolExecutors(deps: {
         execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
     };
     learn_get_context: {
+        execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
+    };
+    learn_get_global_context: {
+        execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
+    };
+    learn_get_project_context: {
         execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: AgentToolUpdateCallback<unknown> | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<unknown>>;
     };
     learn_query: {

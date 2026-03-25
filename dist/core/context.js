@@ -1,6 +1,11 @@
 /**
  * Context Assembler Module - Memory retrieval and context building
+ *
+ * Supports hybrid architecture:
+ * - Local (project) context: workspace-specific memories
+ * - Global (user) context: cross-project traits, interests, goals
  */
+import { GLOBAL_WORKSPACE_ID } from "../shared.js";
 export function createContextAssembler(store) {
     return new ContextAssembler(store);
 }
@@ -9,27 +14,84 @@ export class ContextAssembler {
     constructor(store) {
         this.store = store;
     }
+    /**
+     * Get blended context: global (user-scope) + local (project-scope)
+     * This is the main method for context assembly
+     */
     assembleContext(workspaceId, peerId) {
-        const rep = this.store.getRepresentation(workspaceId, peerId);
+        const blended = this.getBlendedContext(workspaceId, peerId);
+        return blended.assembledString;
+    }
+    /**
+     * Get full blended context with structure
+     */
+    getBlendedContext(workspaceId, peerId) {
+        // Get local (project) representation
+        const localRep = this.store.getRepresentation(workspaceId, peerId, false);
+        // Get global (user-scope) representation
+        const globalRep = this.store.getRepresentation(GLOBAL_WORKSPACE_ID, peerId, false);
+        // Blend the context strings
+        const assembledString = this.buildBlendedContextString(globalRep, localRep);
+        return {
+            global: {
+                peerCard: globalRep?.peerCard || null,
+                conclusions: globalRep?.conclusions || [],
+            },
+            project: {
+                peerCard: localRep?.peerCard || null,
+                conclusions: localRep?.conclusions || [],
+                summaries: localRep?.summaries || [],
+                observations: (localRep?.observations || [])
+                    .filter(o => !o.processed)
+                    .slice(0, 5)
+                    .map(o => ({ role: o.role, content: o.content, processed: o.processed })),
+            },
+            assembledString,
+        };
+    }
+    /**
+     * Get global context only (user-scope from __global__ workspace)
+     */
+    getGlobalContext(peerId) {
+        const rep = this.store.getRepresentation(GLOBAL_WORKSPACE_ID, peerId, false);
         if (!rep)
             return null;
-        return this.buildContextString(rep);
+        return this.buildGlobalContextString(rep);
     }
-    async searchSimilar(workspaceId, peerId, query, topK = 5, minSimilarity = 0.0) {
-        const conclusions = this.store.getConclusions(workspaceId, peerId, 100);
-        if (!conclusions.length)
+    /**
+     * Get project-only context (local workspace, project scope)
+     */
+    getProjectContext(workspaceId, peerId) {
+        const rep = this.store.getRepresentation(workspaceId, peerId, false);
+        if (!rep)
+            return null;
+        return this.buildProjectContextString(rep);
+    }
+    /**
+     * Search across both local and global contexts
+     */
+    async searchSimilar(workspaceId, peerId, query, topK = 5, minSimilarity = 0.0, searchGlobal = true) {
+        // Get local conclusions
+        const localConclusions = this.store.getConclusions(workspaceId, peerId, 100);
+        // Get global conclusions if requested
+        const globalConclusions = searchGlobal
+            ? this.store.getGlobalConclusions(peerId, 100)
+            : [];
+        const allConclusions = [
+            ...localConclusions.map(c => ({ ...c, scope: 'project' })),
+            ...globalConclusions.map(c => ({ ...c, scope: 'user' })),
+        ];
+        if (!allConclusions.length)
             return [];
         // Use embedding-based similarity when available, fallback to keyword
         const queryWords = query.toLowerCase().split(/\s+/);
-        const scored = conclusions.map((c) => {
+        const scored = allConclusions.map((c) => {
             let confidence;
             if (c.embedding && c.embedding.length > 0) {
-                // Use cosine similarity - would need query embedding in real impl
-                // For now, hybrid approach: keyword + embedding presence boost
+                // Hybrid approach: keyword + embedding presence boost
                 const contentWords = c.content.toLowerCase().split(/\s+/);
                 const overlap = queryWords.filter((w) => contentWords.some((cw) => cw.includes(w) || w.includes(cw))).length;
                 const keywordScore = overlap / Math.max(queryWords.length, 1);
-                // Boost if has embeddings (indicates processed)
                 confidence = keywordScore * 0.6 + (c.embedding ? 0.4 : 0);
             }
             else {
@@ -45,56 +107,78 @@ export class ContextAssembler {
             .sort((a, b) => b.confidence - a.confidence)
             .slice(0, topK);
     }
-    getConclusionsByType(workspaceId, peerId, type) {
-        return this.store.getConclusions(workspaceId, peerId, 100).filter((c) => c.type === type);
+    getConclusionsByType(workspaceId, peerId, type, scope) {
+        if (scope === 'user') {
+            return this.store.getGlobalConclusions(peerId, 100).filter(c => c.type === type);
+        }
+        return this.store.getConclusions(workspaceId, peerId, 100).filter(c => c.type === type);
     }
     getSummaries(workspaceId, peerId, limit = 10) {
         return this.store.getSummaries(workspaceId, peerId, limit);
     }
     getMemoryStats(workspaceId, peerId) {
-        const rep = this.store.getRepresentation(workspaceId, peerId);
-        if (!rep)
-            return { conclusionCount: 0, summaryCount: 0, hasPeerCard: false, lastReasonedAt: null, topInterests: [], topTraits: [] };
+        const rep = this.store.getRepresentation(workspaceId, peerId, false);
+        const globalRep = this.store.getRepresentation(GLOBAL_WORKSPACE_ID, peerId, false);
+        if (!rep) {
+            return {
+                conclusionCount: 0,
+                summaryCount: 0,
+                globalConclusionCount: globalRep?.conclusions.length || 0,
+                hasPeerCard: false,
+                hasGlobalPeerCard: !!globalRep?.peerCard,
+                lastReasonedAt: null,
+                topInterests: globalRep?.peerCard?.interests?.slice(0, 5) || [],
+                topTraits: globalRep?.peerCard?.traits?.slice(0, 5) || [],
+            };
+        }
         const card = rep.peerCard;
+        const globalCard = globalRep?.peerCard;
+        // Merge interests/traits from both local and global peer cards
+        const allInterests = [...(card?.interests || []), ...(globalCard?.interests || [])];
+        const allTraits = [...(card?.traits || []), ...(globalCard?.traits || [])];
+        // Deduplicate
+        const uniqueInterests = [...new Set(allInterests)];
+        const uniqueTraits = [...new Set(allTraits)];
         return {
             conclusionCount: rep.conclusions.length,
             summaryCount: rep.summaries.length,
+            globalConclusionCount: globalRep?.conclusions.length || 0,
             hasPeerCard: !!card,
+            hasGlobalPeerCard: !!globalCard,
             lastReasonedAt: rep.lastReasonedAt || null,
-            topInterests: card?.interests?.slice(0, 5) || [],
-            topTraits: card?.traits?.slice(0, 5) || [],
+            topInterests: uniqueInterests.slice(0, 5),
+            topTraits: uniqueTraits.slice(0, 5),
         };
     }
     /**
      * Get comprehensive memory insights about a peer's learning patterns
+     * Includes both local and global data
      */
     getInsights(workspaceId, peerId) {
         const now = Date.now();
         const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
         const oneMonthAgo = now - 30 * 24 * 60 * 60 * 1000;
-        const conclusions = this.store.getConclusions(workspaceId, peerId, 1000);
+        // Get both local and global conclusions
+        const localConclusions = this.store.getConclusions(workspaceId, peerId, 1000);
+        const globalConclusions = this.store.getGlobalConclusions(peerId, 1000);
+        const allConclusions = [...localConclusions, ...globalConclusions];
         const summaries = this.store.getSummaries(workspaceId, peerId, 100);
         const sessions = this.store.getAllSessions(workspaceId);
-        const peerCard = this.store.getPeerCard(workspaceId, peerId);
+        // Merge peer cards
+        const localCard = this.store.getPeerCard(workspaceId, peerId);
+        const globalCard = this.store.getPeerCard(GLOBAL_WORKSPACE_ID, peerId);
+        const peerCard = this.mergePeerCards(localCard, globalCard);
         // Learning velocity: conclusions per day over last week
-        const recentConclusions = conclusions.filter(c => c.createdAt > oneWeekAgo);
+        const recentConclusions = allConclusions.filter(c => c.createdAt > oneWeekAgo);
         const learningVelocity = recentConclusions.length / 7;
         // Topic distribution
         const topicDistribution = {
-            deductive: conclusions.filter(c => c.type === 'deductive').length,
-            inductive: conclusions.filter(c => c.type === 'inductive').length,
-            abductive: conclusions.filter(c => c.type === 'abductive').length,
+            deductive: allConclusions.filter(c => c.type === 'deductive').length,
+            inductive: allConclusions.filter(c => c.type === 'inductive').length,
+            abductive: allConclusions.filter(c => c.type === 'abductive').length,
         };
         // Interest evolution from peer card and conclusions
-        const interestCounts = new Map();
-        // Extract interests from peer card
-        for (const interest of peerCard?.interests || []) {
-            if (!interestCounts.has(interest)) {
-                interestCounts.set(interest, [0, 0]); // [old count, recent count]
-            }
-        }
-        // Extract interests from conclusions (look for keywords)
-        const allConclusionsText = conclusions.map(c => c.content.toLowerCase()).join(' ');
+        const allConclusionsText = allConclusions.map(c => c.content.toLowerCase()).join(' ');
         const knownInterests = peerCard?.interests || [];
         const interestEvolution = knownInterests.map(interest => {
             const interestLower = interest.toLowerCase();
@@ -147,7 +231,7 @@ export class ContextAssembler {
         // Recent activity
         const recentActivity = {
             conclusionsLastWeek: recentConclusions.length,
-            conclusionsLastMonth: conclusions.filter(c => c.createdAt > oneMonthAgo).length,
+            conclusionsLastMonth: allConclusions.filter(c => c.createdAt > oneMonthAgo).length,
             sessionsLastWeek: oneWeekSessions.length,
         };
         return {
@@ -194,7 +278,112 @@ export class ContextAssembler {
         }
         return parts.join("\n");
     }
-    buildContextString(rep) {
+    // ========================================================================
+    // PRIVATE METHODS
+    // ========================================================================
+    /**
+     * Merge two peer cards, preferring non-null values from the first
+     */
+    mergePeerCards(local, global) {
+        if (!local && !global)
+            return {};
+        return {
+            name: local?.name || global?.name,
+            occupation: local?.occupation || global?.occupation,
+            interests: [...new Set([...(local?.interests || []), ...(global?.interests || [])])],
+            traits: [...new Set([...(local?.traits || []), ...(global?.traits || [])])],
+            goals: [...new Set([...(local?.goals || []), ...(global?.goals || [])])],
+        };
+    }
+    /**
+     * Build blended context string: global first, then project
+     */
+    buildBlendedContextString(globalRep, localRep) {
+        const parts = [];
+        // === GLOBAL (USER-SCOPE) ===
+        // Global peer card first - interests, traits, goals
+        if (globalRep?.peerCard) {
+            const card = globalRep.peerCard;
+            parts.push("## User Profile (Global)");
+            if (card.name)
+                parts.push(`- Name: ${card.name}`);
+            if (card.occupation)
+                parts.push(`- Occupation: ${card.occupation}`);
+            if (card.interests.length)
+                parts.push(`- Interests: ${card.interests.join(", ")}`);
+            if (card.traits.length)
+                parts.push(`- Traits: ${card.traits.join(", ")}`);
+            if (card.goals.length)
+                parts.push(`- Goals: ${card.goals.join(", ")}`);
+        }
+        // Global conclusions (user-scope)
+        if (globalRep?.conclusions && globalRep.conclusions.length > 0) {
+            parts.push("\n## Cross-Project Insights");
+            globalRep.conclusions.slice(0, 5).forEach((c) => parts.push(`- [${c.type}] ${c.content}`));
+        }
+        // === PROJECT (LOCAL) ===
+        // Recent unprocessed observations
+        const recentObservations = (localRep?.observations || [])
+            .filter(o => !o.processed)
+            .slice(0, 3);
+        if (recentObservations.length > 0) {
+            parts.push("\n## Recent Observations");
+            recentObservations.forEach((o) => parts.push(`- [${o.role}] ${o.content.slice(0, 150)}`));
+        }
+        // Local conclusions (project-scope)
+        if (localRep?.conclusions && localRep.conclusions.length > 0) {
+            parts.push("\n## Project Conclusions");
+            localRep.conclusions.slice(0, 5).forEach((c) => parts.push(`- [${c.type}] ${c.content}`));
+        }
+        // Local summaries
+        if (localRep?.summaries && localRep.summaries.length > 0) {
+            parts.push("\n## Project Summaries");
+            localRep.summaries.slice(0, 2).forEach((s) => parts.push(`- ${s.type}: ${s.content.slice(0, 150)}`));
+        }
+        // Project-specific peer card (overrides)
+        if (localRep?.peerCard) {
+            const card = localRep.peerCard;
+            // Only show if it has unique info beyond global
+            const hasUniqueInfo = card.occupation || card.interests.length || card.traits.length;
+            if (hasUniqueInfo) {
+                parts.push("\n## Project-Specific Profile");
+                if (card.occupation)
+                    parts.push(`- Occupation: ${card.occupation}`);
+                if (card.interests.length)
+                    parts.push(`- Interests: ${card.interests.join(", ")}`);
+            }
+        }
+        return parts.join("\n") || "No memory context available.";
+    }
+    /**
+     * Build global context string only
+     */
+    buildGlobalContextString(rep) {
+        const parts = [];
+        if (rep.peerCard) {
+            const card = rep.peerCard;
+            parts.push("## User Profile (Global)");
+            if (card.name)
+                parts.push(`- Name: ${card.name}`);
+            if (card.occupation)
+                parts.push(`- Occupation: ${card.occupation}`);
+            if (card.interests.length)
+                parts.push(`- Interests: ${card.interests.join(", ")}`);
+            if (card.traits.length)
+                parts.push(`- Traits: ${card.traits.join(", ")}`);
+            if (card.goals.length)
+                parts.push(`- Goals: ${card.goals.join(", ")}`);
+        }
+        if (rep.conclusions.length > 0) {
+            parts.push("\n## Cross-Project Insights");
+            rep.conclusions.slice(0, 10).forEach((c) => parts.push(`- [${c.type}] ${c.content}`));
+        }
+        return parts.join("\n") || "No global context available.";
+    }
+    /**
+     * Build project-only context string
+     */
+    buildProjectContextString(rep) {
         const parts = [];
         // Recent unprocessed observations
         const recentObservations = rep.observations
@@ -226,7 +415,7 @@ export class ContextAssembler {
             if (card.goals.length)
                 parts.push(`- Goals: ${card.goals.join(", ")}`);
         }
-        return parts.join("\n") || "No memory context available.";
+        return parts.join("\n") || "No project context available.";
     }
 }
 //# sourceMappingURL=context.js.map

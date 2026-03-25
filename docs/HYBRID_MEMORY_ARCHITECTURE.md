@@ -93,12 +93,16 @@ interface ReasoningOutput {
 - [x] Create __global__ workspace on init
 - [x] `getBlendedRepresentation()` for context assembly
 
-#### Phase 2: Context Assembly (Next)
-- [ ] `assembleContext()` blends global + local
-- [ ] `getGlobalContext(peerId)` - global only
-- [ ] `getProjectContext(workspaceId, peerId)` - project only
+#### Phase 2: Context Assembly ✅ (Complete)
+- [x] `assembleContext()` blends global + local
+- [x] `getGlobalContext(peerId)` - global only
+- [x] `getProjectContext(workspaceId, peerId)` - project only
+- [x] `getBlendedContext()` returns structured global + local data
+- [x] `searchSimilar()` searches across both scopes
+- [x] `getMemoryStats()` includes both local and global counts
+- [x] New tools: `learn_get_global_context`, `learn_get_project_context`
 
-#### Phase 3: Reasoning
+#### Phase 3: Reasoning (Next)
 - [ ] Update reasoning prompts to output scope
 - [ ] Parse scope from reasoning output
 - [ ] Save conclusions to appropriate scope

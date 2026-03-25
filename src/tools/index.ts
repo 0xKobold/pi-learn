@@ -54,8 +54,24 @@ export const TOOLS = {
   },
   learn_get_context: {
     label: "Get Peer Context",
-    description: "Retrieve the assembled context for a peer from memory.",
+    description: "Retrieve the blended context for a peer (global user profile + project memories).",
+    params: Type.Object({ 
+      peerId: Type.Optional(Type.String({ description: "Peer ID (defaults to 'user')" })),
+      scope: Type.Optional(Type.String({ description: "Scope filter: 'blended' (default), 'global', or 'project'" })),
+    }),
+  },
+  learn_get_global_context: {
+    label: "Get Global Context",
+    description: "Retrieve cross-project context (user traits, interests, goals) shared across all projects.",
     params: Type.Object({ peerId: Type.Optional(Type.String({ description: "Peer ID (defaults to 'user')" })) }),
+  },
+  learn_get_project_context: {
+    label: "Get Project Context",
+    description: "Retrieve project-specific context (local to current workspace).",
+    params: Type.Object({ 
+      peerId: Type.Optional(Type.String({ description: "Peer ID (defaults to 'user')" })),
+      workspaceId: Type.Optional(Type.String({ description: "Workspace ID (defaults to current)" })),
+    }),
   },
   learn_query: {
     label: "Query Memory",
@@ -68,7 +84,13 @@ export const TOOLS = {
     }),
   },
   learn_reason_now: { label: "Trigger Reasoning", description: "Immediately process pending messages through the reasoning engine.", params: Type.Object({}) },
-  learn_trigger_dream: { label: "Trigger Dream", description: "Manually trigger a dream cycle for deeper reasoning.", params: Type.Object({}) },
+  learn_trigger_dream: { 
+    label: "Trigger Dream", 
+    description: "Manually trigger a dream cycle for deeper reasoning.", 
+    params: Type.Object({ 
+      scope: Type.Optional(Type.String({ description: "Scope: 'project' (default) or 'user' (global)" })),
+    }),
+  },
   learn_prune: { label: "Prune Old Data", description: "Manually trigger retention pruning to delete old data.", params: Type.Object({}) },
   learn_get_peer_card: {
     label: "Get Peer Card",
@@ -188,7 +210,7 @@ export function createToolExecutors(deps: {
   contextAssembler: ContextAssembler;
   reasoningEngine: ReasoningEngine;
   config: ToolsConfig;
-  runDream: () => Promise<void>;
+  runDream: (scope?: 'user' | 'project') => Promise<void>;
 }) {
   const { store, contextAssembler, reasoningEngine, config, runDream } = deps;
 
@@ -273,9 +295,53 @@ export function createToolExecutors(deps: {
         _onUpdate: AgentToolUpdateCallback<unknown> | undefined,
         _ctx: ExtensionContext
       ): Promise<AgentToolResult<unknown>> => {
-        const assembledCtx = contextAssembler.assembleContext(config.workspaceId, params.peerId || "user");
-        if (!assembledCtx) return { content: [{ type: "text" as const, text: "No context found" }], details: { found: false } };
-        return { content: [{ type: "text" as const, text: assembledCtx }], details: { found: true, peerId: params.peerId } };
+        const peerId = params.peerId || "user";
+        const scope = params.scope || "blended";
+        
+        let assembledCtx: string | null = null;
+        let contextType = "blended";
+        
+        if (scope === "global") {
+          assembledCtx = contextAssembler.getGlobalContext(peerId);
+          contextType = "global";
+        } else if (scope === "project") {
+          assembledCtx = contextAssembler.getProjectContext(config.workspaceId, peerId);
+          contextType = "project";
+        } else {
+          assembledCtx = contextAssembler.assembleContext(config.workspaceId, peerId);
+        }
+        
+        if (!assembledCtx) return { content: [{ type: "text" as const, text: "No context found" }], details: { found: false, scope: contextType } };
+        return { content: [{ type: "text" as const, text: assembledCtx }], details: { found: true, peerId, scope: contextType } };
+      }) as ToolExecute<any>,
+    },
+    learn_get_global_context: {
+      execute: (async (
+        _: string,
+        params: Static<typeof TOOLS.learn_get_global_context.params>,
+        _signal: AbortSignal | undefined,
+        _onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+        _ctx: ExtensionContext
+      ): Promise<AgentToolResult<unknown>> => {
+        const peerId = params.peerId || "user";
+        const assembledCtx = contextAssembler.getGlobalContext(peerId);
+        if (!assembledCtx) return { content: [{ type: "text" as const, text: "No global context found" }], details: { found: false, scope: "global" } };
+        return { content: [{ type: "text" as const, text: assembledCtx }], details: { found: true, peerId, scope: "global" } };
+      }) as ToolExecute<any>,
+    },
+    learn_get_project_context: {
+      execute: (async (
+        _: string,
+        params: Static<typeof TOOLS.learn_get_project_context.params>,
+        _signal: AbortSignal | undefined,
+        _onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+        _ctx: ExtensionContext
+      ): Promise<AgentToolResult<unknown>> => {
+        const peerId = params.peerId || "user";
+        const workspaceId = params.workspaceId || config.workspaceId;
+        const assembledCtx = contextAssembler.getProjectContext(workspaceId, peerId);
+        if (!assembledCtx) return { content: [{ type: "text" as const, text: "No project context found" }], details: { found: false, scope: "project" } };
+        return { content: [{ type: "text" as const, text: assembledCtx }], details: { found: true, peerId, scope: "project", workspaceId } };
       }) as ToolExecute<any>,
     },
     learn_query: {
@@ -313,14 +379,17 @@ export function createToolExecutors(deps: {
     learn_trigger_dream: {
       execute: (async (
         _: string,
-        __: Static<typeof TOOLS.learn_trigger_dream.params>,
+        params: Static<typeof TOOLS.learn_trigger_dream.params>,
         _signal: AbortSignal | undefined,
         _onUpdate: AgentToolUpdateCallback<unknown> | undefined,
         ctx: ExtensionContext
       ): Promise<AgentToolResult<unknown>> => {
         ctx.ui.setStatus("learn", "Dreaming...");
-        await runDream();
-        return { content: [{ type: "text" as const, text: "Dream cycle complete" }], details: { success: true } };
+        // runDream accepts scope parameter: 'project' or 'user'
+        const scope = (params.scope as 'project' | 'user') || 'project';
+        await runDream(scope);
+        const dreamMeta = store.getDreamMetadata(scope === 'user' ? "__global__" : config.workspaceId);
+        return { content: [{ type: "text" as const, text: `Dream cycle complete (${scope} scope). ${dreamMeta.lastDreamConclusions} conclusions generated.` }], details: { success: true, scope, dreamMeta } };
       }) as ToolExecute<any>,
     },
     learn_prune: {
