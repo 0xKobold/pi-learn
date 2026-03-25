@@ -124,13 +124,14 @@ function createStatus(enabled: boolean, theme: Theme): Component {
 
 /**
  * Create a list item component with width truncation
+ * The maxValueWidth is the total line width (including prefix)
  */
-function createListItem(label: string, value: string, theme: Theme, maxValueWidth: number = 40): Component {
+function createListItem(label: string, value: string, theme: Theme, maxValueWidth: number = 50): Component {
   const prefix = `${theme.fg("accent", "•")} ${theme.bold(label + ":")} `;
-  const prefixWidth = measureWidth(prefix);
-  const availableWidth = Math.max(1, maxValueWidth - prefixWidth);
-  const truncatedValue = fitText(value, availableWidth);
-  return new TextComponent(prefix + truncatedValue);
+  const fullLine = prefix + value;
+  // Truncate the entire line to maxValueWidth
+  const truncatedLine = fitText(fullLine, maxValueWidth);
+  return new TextComponent(truncatedLine);
 }
 
 /**

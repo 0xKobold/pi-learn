@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPeerCardRenderer, createListItem } from "../src/renderers";
+import { visibleWidth } from "@mariozechner/pi-tui";
 
-// Mock theme
+// Mock theme - no ANSI codes for easier testing
 const mockTheme = {
   fg: (color: string, text: string) => text,
   bold: (text: string) => text,
@@ -17,9 +18,9 @@ describe("createListItem truncation", () => {
     const item = createListItem("Interests", longValue, mockTheme, 50);
     const lines = item.render(83);
     
-    // Each line should be <= 83 chars
+    // Each line should fit within 83 visible chars
     for (const line of lines) {
-      expect(line.length).toBeLessThanOrEqual(83);
+      expect(visibleWidth(line)).toBeLessThanOrEqual(83);
     }
     
     // Should contain ellipsis since value was truncated
@@ -32,6 +33,10 @@ describe("createListItem truncation", () => {
     const item = createListItem("Interests", shortValue, mockTheme, 50);
     const lines = item.render(83);
     
+    // Check all lines fit
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(83);
+    }
     expect(lines.join("")).toContain(shortValue);
     expect(lines.join("").includes("...")).toBe(false);
   });
@@ -67,15 +72,16 @@ describe("createPeerCardRenderer", () => {
     const renderer = createPeerCardRenderer(peerCard, mockTheme);
     const lines = renderer.render(83);
 
-    // Check that no line exceeds terminal width
+    // Check that no line exceeds terminal width (using visibleWidth for ANSI-aware measurement)
     let hasOverflow = false;
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].length > 83) {
-        console.log(`Line ${i} overflow: ${lines[i].length} chars`);
+      const visible = visibleWidth(lines[i]);
+      if (visible > 83) {
+        console.log(`Line ${i} overflow: ${visible} visible chars`);
         hasOverflow = true;
       }
     }
-    
+
     expect(hasOverflow).toBe(false);
   });
 });

@@ -54,6 +54,7 @@ declare function createValue(text: string, theme: Theme): Component;
 declare function createStatus(enabled: boolean, theme: Theme): Component;
 /**
  * Create a list item component with width truncation
+ * The maxValueWidth is the total line width (including prefix)
  */
 declare function createListItem(label: string, value: string, theme: Theme, maxValueWidth?: number): Component;
 /**

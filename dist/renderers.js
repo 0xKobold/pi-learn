@@ -111,13 +111,14 @@ function createStatus(enabled, theme) {
 }
 /**
  * Create a list item component with width truncation
+ * The maxValueWidth is the total line width (including prefix)
  */
-function createListItem(label, value, theme, maxValueWidth = 40) {
+function createListItem(label, value, theme, maxValueWidth = 50) {
     const prefix = `${theme.fg("accent", "•")} ${theme.bold(label + ":")} `;
-    const prefixWidth = measureWidth(prefix);
-    const availableWidth = Math.max(1, maxValueWidth - prefixWidth);
-    const truncatedValue = fitText(value, availableWidth);
-    return new TextComponent(prefix + truncatedValue);
+    const fullLine = prefix + value;
+    // Truncate the entire line to maxValueWidth
+    const truncatedLine = fitText(fullLine, maxValueWidth);
+    return new TextComponent(truncatedLine);
 }
 /**
  * Create a section divider with width truncation
