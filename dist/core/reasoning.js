@@ -9,6 +9,7 @@ export const DEFAULT_RETRY_CONFIG = {
     maxRetries: 3,
     retryDelayMs: 2000,
     timeoutMs: 120000,
+    maxBackoffMs: 30000,
 };
 export function createReasoningEngine(config) {
     return new ReasoningEngine(config);
@@ -20,6 +21,10 @@ export class ReasoningEngine {
     maxRetries;
     retryDelayMs;
     timeoutMs;
+    maxBackoffMs;
+    concurrency;
+    activeRequests = 0;
+    requestQueue = [];
     lastProcessedAt = 0;
     constructor(config) {
         this.config = config;
@@ -27,6 +32,8 @@ export class ReasoningEngine {
         this.maxRetries = retryConfig.maxRetries;
         this.retryDelayMs = retryConfig.retryDelayMs;
         this.timeoutMs = retryConfig.timeoutMs;
+        this.maxBackoffMs = retryConfig.maxBackoffMs ?? DEFAULT_RETRY_CONFIG.maxBackoffMs;
+        this.concurrency = config.concurrency ?? 1;
     }
     queue(item) {
         this.messageQueue.push(item);
@@ -102,39 +109,91 @@ export class ReasoningEngine {
         }
     }
     async callOllama(endpoint, body) {
+        await this.acquireSemaphore();
         let lastError = null;
-        for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+        try {
+            for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
                 try {
-                    const response = await fetch(`${this.config.ollamaBaseUrl}${endpoint}`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", ...(this.config.ollamaApiKey && { Authorization: `Bearer ${this.config.ollamaApiKey}` }) },
-                        body: JSON.stringify(body),
-                        signal: controller.signal,
-                    });
-                    if (!response.ok) {
-                        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+                    try {
+                        const response = await fetch(`${this.config.ollamaBaseUrl}${endpoint}`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", ...(this.config.ollamaApiKey && { Authorization: `Bearer ${this.config.ollamaApiKey}` }) },
+                            body: JSON.stringify(body),
+                            signal: controller.signal,
+                        });
+                        if (!response.ok) {
+                            throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+                        }
+                        return response.json();
                     }
-                    return response.json();
+                    finally {
+                        clearTimeout(timeoutId);
+                    }
                 }
-                finally {
-                    clearTimeout(timeoutId);
+                catch (error) {
+                    lastError = error instanceof Error ? error : new Error(String(error));
+                    const classifiedError = this.classifyError(lastError);
+                    if (attempt < this.maxRetries) {
+                        const backoffMs = this.calculateBackoff(attempt);
+                        console.warn(`[ReasoningEngine] Attempt ${attempt} failed: ${classifiedError}. Retrying in ${Math.round(backoffMs)}ms...`);
+                        await this.sleep(backoffMs);
+                    }
                 }
             }
-            catch (error) {
-                lastError = error instanceof Error ? error : new Error(String(error));
-                if (attempt < this.maxRetries) {
-                    console.warn(`[ReasoningEngine] Attempt ${attempt} failed: ${lastError.message}. Retrying in ${this.retryDelayMs}ms...`);
-                    await this.sleep(this.retryDelayMs);
-                }
-            }
+            throw new Error(`[ReasoningEngine] All ${this.maxRetries} attempts failed. Last error: ${this.classifyError(lastError)}`);
         }
-        throw new Error(`[ReasoningEngine] All ${this.maxRetries} attempts failed. Last error: ${lastError?.message}`);
+        finally {
+            this.releaseSemaphore();
+        }
     }
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+    /**
+     * Calculate exponential backoff with jitter
+     */
+    calculateBackoff(attempt) {
+        const exponential = Math.min(this.retryDelayMs * Math.pow(2, attempt - 1), this.maxBackoffMs);
+        const jitter = Math.random() * 1000; // 0-1s random jitter
+        return exponential + jitter;
+    }
+    /**
+     * Classify error for better debugging
+     */
+    classifyError(error) {
+        if (error.name === 'AbortError' || error.message.includes('aborted')) {
+            return `Request timeout after ${this.timeoutMs}ms - Ollama may be overloaded or slow`;
+        }
+        if (error.message.includes('fetch') && error.message.includes('network')) {
+            return `Network error - check Ollama connectivity: ${error.message}`;
+        }
+        return error.message;
+    }
+    /**
+     * Acquire semaphore slot for concurrency control
+     */
+    async acquireSemaphore() {
+        if (this.activeRequests < this.concurrency) {
+            this.activeRequests++;
+            return;
+        }
+        return new Promise((resolve) => {
+            this.requestQueue.push(resolve);
+            this.activeRequests++;
+        });
+    }
+    /**
+     * Release semaphore slot
+     */
+    releaseSemaphore() {
+        this.activeRequests--;
+        const next = this.requestQueue.shift();
+        if (next) {
+            this.activeRequests++;
+            next();
+        }
     }
     /**
      * Build reasoning prompt with scope classification guidance

@@ -15,18 +15,21 @@ export interface ReasoningEngineConfig {
   embeddingModel: string;
   tokenBatchSize: number;
   retry?: Partial<RetryConfig>;
+  concurrency?: number;  // Max concurrent Ollama requests (default: 1)
 }
 
 export interface RetryConfig {
   maxRetries: number;        // Default: 3
-  retryDelayMs: number;      // Default: 2000
+  retryDelayMs: number;      // Base delay in ms (default: 2000)
   timeoutMs: number;          // Default: 120000 (2 min)
+  maxBackoffMs: number;       // Max backoff cap (default: 30000)
 }
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 3,
   retryDelayMs: 2000,
   timeoutMs: 120000,
+  maxBackoffMs: 30000,
 };
 
 export function createReasoningEngine(config: ReasoningEngineConfig): ReasoningEngine {
@@ -51,6 +54,10 @@ export class ReasoningEngine {
   private maxRetries: number;
   private retryDelayMs: number;
   private timeoutMs: number;
+  private maxBackoffMs: number;
+  private concurrency: number;
+  private activeRequests = 0;
+  private requestQueue: Array<() => void> = [];
   private lastProcessedAt = 0;
 
   constructor(private config: ReasoningEngineConfig) {
@@ -58,6 +65,8 @@ export class ReasoningEngine {
     this.maxRetries = retryConfig.maxRetries;
     this.retryDelayMs = retryConfig.retryDelayMs;
     this.timeoutMs = retryConfig.timeoutMs;
+    this.maxBackoffMs = retryConfig.maxBackoffMs ?? DEFAULT_RETRY_CONFIG.maxBackoffMs;
+    this.concurrency = config.concurrency ?? 1;
   }
 
   queue(item: { sessionFile: string; peerId: string; messages: Array<{ role: string; content: string }>; queuedAt: number }): void {
@@ -151,44 +160,99 @@ export class ReasoningEngine {
   }
 
   private async callOllama<T>(endpoint: string, body: any): Promise<T> {
+    await this.acquireSemaphore();
     let lastError: Error | null = null;
     
-    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-        
+    try {
+      for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
-          const response = await fetch(`${this.config.ollamaBaseUrl}${endpoint}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(this.config.ollamaApiKey && { Authorization: `Bearer ${this.config.ollamaApiKey}` }) },
-            body: JSON.stringify(body),
-            signal: controller.signal,
-          });
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
           
-          if (!response.ok) {
-            throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+          try {
+            const response = await fetch(`${this.config.ollamaBaseUrl}${endpoint}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(this.config.ollamaApiKey && { Authorization: `Bearer ${this.config.ollamaApiKey}` }) },
+              body: JSON.stringify(body),
+              signal: controller.signal,
+            });
+            
+            if (!response.ok) {
+              throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+            }
+            
+            return response.json();
+          } finally {
+            clearTimeout(timeoutId);
           }
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          const classifiedError = this.classifyError(lastError);
           
-          return response.json();
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        
-        if (attempt < this.maxRetries) {
-          console.warn(`[ReasoningEngine] Attempt ${attempt} failed: ${lastError.message}. Retrying in ${this.retryDelayMs}ms...`);
-          await this.sleep(this.retryDelayMs);
+          if (attempt < this.maxRetries) {
+            const backoffMs = this.calculateBackoff(attempt);
+            console.warn(`[ReasoningEngine] Attempt ${attempt} failed: ${classifiedError}. Retrying in ${Math.round(backoffMs)}ms...`);
+            await this.sleep(backoffMs);
+          }
         }
       }
+      
+      throw new Error(`[ReasoningEngine] All ${this.maxRetries} attempts failed. Last error: ${this.classifyError(lastError!)}`);
+    } finally {
+      this.releaseSemaphore();
     }
-    
-    throw new Error(`[ReasoningEngine] All ${this.maxRetries} attempts failed. Last error: ${lastError?.message}`);
   }
   
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Calculate exponential backoff with jitter
+   */
+  private calculateBackoff(attempt: number): number {
+    const exponential = Math.min(this.retryDelayMs * Math.pow(2, attempt - 1), this.maxBackoffMs);
+    const jitter = Math.random() * 1000; // 0-1s random jitter
+    return exponential + jitter;
+  }
+
+  /**
+   * Classify error for better debugging
+   */
+  private classifyError(error: Error): string {
+    if (error.name === 'AbortError' || error.message.includes('aborted')) {
+      return `Request timeout after ${this.timeoutMs}ms - Ollama may be overloaded or slow`;
+    }
+    if (error.message.includes('fetch') && error.message.includes('network')) {
+      return `Network error - check Ollama connectivity: ${error.message}`;
+    }
+    return error.message;
+  }
+
+  /**
+   * Acquire semaphore slot for concurrency control
+   */
+  private async acquireSemaphore(): Promise<void> {
+    if (this.activeRequests < this.concurrency) {
+      this.activeRequests++;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.requestQueue.push(resolve);
+      this.activeRequests++;
+    });
+  }
+
+  /**
+   * Release semaphore slot
+   */
+  private releaseSemaphore(): void {
+    this.activeRequests--;
+    const next = this.requestQueue.shift();
+    if (next) {
+      this.activeRequests++;
+      next();
+    }
   }
 
   /**

@@ -11,6 +11,7 @@
   ],
   "author": "Warren Gates <wbgates@gmail.com>",
   "license": "MIT",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -39,7 +40,7 @@
   },
   "pi": {
     "extensions": [
-      "./dist/index.js"
+      "./dist/index.mjs"
     ],
     "image": "https://ollama.com/public/ollama.png"
   },

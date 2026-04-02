@@ -13,11 +13,13 @@ export interface ReasoningEngineConfig {
     embeddingModel: string;
     tokenBatchSize: number;
     retry?: Partial<RetryConfig>;
+    concurrency?: number;
 }
 export interface RetryConfig {
     maxRetries: number;
     retryDelayMs: number;
     timeoutMs: number;
+    maxBackoffMs: number;
 }
 export declare const DEFAULT_RETRY_CONFIG: RetryConfig;
 export declare function createReasoningEngine(config: ReasoningEngineConfig): ReasoningEngine;
@@ -39,6 +41,10 @@ export declare class ReasoningEngine {
     private maxRetries;
     private retryDelayMs;
     private timeoutMs;
+    private maxBackoffMs;
+    private concurrency;
+    private activeRequests;
+    private requestQueue;
     private lastProcessedAt;
     constructor(config: ReasoningEngineConfig);
     queue(item: {
@@ -80,6 +86,22 @@ export declare class ReasoningEngine {
     private processQueue;
     private callOllama;
     private sleep;
+    /**
+     * Calculate exponential backoff with jitter
+     */
+    private calculateBackoff;
+    /**
+     * Classify error for better debugging
+     */
+    private classifyError;
+    /**
+     * Acquire semaphore slot for concurrency control
+     */
+    private acquireSemaphore;
+    /**
+     * Release semaphore slot
+     */
+    private releaseSemaphore;
     /**
      * Build reasoning prompt with scope classification guidance
      */
